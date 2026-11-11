@@ -1,4 +1,4 @@
-// Renders a compact overview dashboard from subjectsData without coupling to app.js.
+// Renders a compact overview dashboard from scansData without coupling to app.js.
 (function() {
     const SVG_NS = 'http://www.w3.org/2000/svg';
 
@@ -51,8 +51,22 @@
         }).format(value);
     }
 
+    // The rows are scans; a subject with several scans has several rows, and is counted once.
+    function uniqueSubjects(rows) {
+        const subjects = new Map();
+        rows.forEach(row => {
+            const key = `${row['Dataset ID']}/${row['Subject ID']}`;
+            if (!subjects.has(key)) {
+                subjects.set(key, row);
+            }
+        });
+        return [...subjects.values()];
+    }
+
     function summarizeSubjects(data) {
-        const subjects = Array.isArray(data) ? data : [];
+        const scans = Array.isArray(data) ? data : [];
+        const subjects = uniqueSubjects(scans);
+        const totalScans = scans.length;
         const totalSubjects = subjects.length;
         const datasetIds = new Set();
         const genders = {};
@@ -63,10 +77,6 @@
         const nurbsItems = [];
 
         subjects.forEach(subject => {
-            if (subject['Dataset ID'] !== null && subject['Dataset ID'] !== undefined) {
-                datasetIds.add(subject['Dataset ID']);
-            }
-
             const gender = normalizeGender(subject['Gender']);
             genders[gender] = (genders[gender] || 0) + 1;
 
@@ -74,19 +84,24 @@
             if (!Number.isNaN(age) && age > 0) {
                 ages.push(age);
             }
+        });
 
-            segmentationItems.push(...parseItemList(subject['Segmentation Available']));
-            meshItems.push(...parseItemList(subject['Mesh Available']));
-            nurbsItems.push(...parseItemList(subject['NURBS Available']));
+        scans.forEach(scan => {
+            if (scan['Dataset ID'] !== null && scan['Dataset ID'] !== undefined) {
+                datasetIds.add(scan['Dataset ID']);
+            }
+            segmentationItems.push(...parseItemList(scan['Segmentation Available']));
+            meshItems.push(...parseItemList(scan['Mesh Available']));
+            nurbsItems.push(...parseItemList(scan['NURBS Available']));
         });
 
         const allBoneLabels = [...segmentationItems, ...meshItems, ...nurbsItems];
         const uniqueBoneLabels = new Set(allBoneLabels);
 
-        const subjectsWithImage = subjects.filter(subject => subject['Image Available'] === true || subject['Image Available'] === 'true').length;
-        const subjectsWithSeg = subjects.filter(subject => parseItemList(subject['Segmentation Available']).length > 0).length;
-        const subjectsWithMesh = subjects.filter(subject => parseItemList(subject['Mesh Available']).length > 0).length;
-        const subjectsWithNurbs = subjects.filter(subject => parseItemList(subject['NURBS Available']).length > 0).length;
+        const scansWithImage = scans.filter(scan => scan['Image Available'] === true || scan['Image Available'] === 'true').length;
+        const scansWithSeg = scans.filter(scan => parseItemList(scan['Segmentation Available']).length > 0).length;
+        const scansWithMesh = scans.filter(scan => parseItemList(scan['Mesh Available']).length > 0).length;
+        const scansWithNurbs = scans.filter(scan => parseItemList(scan['NURBS Available']).length > 0).length;
 
         const boneFrequencies = {};
         allBoneLabels.forEach(label => {
@@ -108,6 +123,7 @@
 
         return {
             totalSubjects,
+            totalScans,
             totalDatasets: datasetIds.size,
             genders,
             ages,
@@ -116,13 +132,13 @@
             ageMean,
             ageKnownCount: ages.length,
             uniqueBoneLabelsCount: uniqueBoneLabels.size,
-            subjectsWithImage,
+            scansWithImage,
             totalSegmentationMasks: segmentationItems.length,
             totalMeshes: meshItems.length,
             totalNurbs: nurbsItems.length,
-            subjectsWithSeg,
-            subjectsWithMesh,
-            subjectsWithNurbs,
+            scansWithSeg,
+            scansWithMesh,
+            scansWithNurbs,
             topBones
         };
     }
@@ -185,18 +201,18 @@
             return;
         }
 
-        if (typeof subjectsData === 'undefined' || !Array.isArray(subjectsData) || subjectsData.length === 0) {
-            metricsRoot.innerHTML = '<p class="overview-empty">No subject data available to summarize.</p>';
+        if (typeof scansData === 'undefined' || !Array.isArray(scansData) || scansData.length === 0) {
+            metricsRoot.innerHTML = '<p class="overview-empty">No scan data available to summarize.</p>';
             return;
         }
 
-        const summary = summarizeSubjects(subjectsData);
+        const summary = summarizeSubjects(scansData);
 
         metricsRoot.innerHTML = '';
         metricsRoot.appendChild(createMetricCard(
             'Subjects',
             formatNumber(summary.totalSubjects),
-            `${formatNumber(summary.totalDatasets)} contributing datasets`
+            `${formatNumber(summary.totalScans)} scans from ${formatNumber(summary.totalDatasets)} datasets`
         ));
         metricsRoot.appendChild(createMetricCard(
             'Unique Bone Labels',
@@ -206,17 +222,17 @@
         metricsRoot.appendChild(createMetricCard(
             'Segmentation Masks',
             formatNumber(summary.totalSegmentationMasks),
-            `${formatNumber(summary.subjectsWithSeg)} subjects with at least one segmentation`
+            `${formatNumber(summary.scansWithSeg)} scans with at least one segmentation`
         ));
         metricsRoot.appendChild(createMetricCard(
             'Meshes',
             formatNumber(summary.totalMeshes),
-            `${formatNumber(summary.subjectsWithMesh)} subjects with at least one mesh`
+            `${formatNumber(summary.scansWithMesh)} scans with at least one mesh`
         ));
         metricsRoot.appendChild(createMetricCard(
             'NURBS',
             formatNumber(summary.totalNurbs),
-            `${formatNumber(summary.subjectsWithNurbs)} subjects with at least one NURBS label`
+            `${formatNumber(summary.scansWithNurbs)} scans with at least one NURBS label`
         ));
 
         genderBarsRoot.innerHTML = '';
@@ -233,13 +249,13 @@
 
         assetBarsRoot.innerHTML = '';
         const assets = [
-            { label: 'Image', count: summary.subjectsWithImage, className: 'fill-image' },
-            { label: 'Segmentation', count: summary.subjectsWithSeg, className: 'fill-primary' },
-            { label: 'Mesh', count: summary.subjectsWithMesh, className: 'fill-secondary' },
-            { label: 'NURBS', count: summary.subjectsWithNurbs, className: 'fill-accent' }
+            { label: 'Image', count: summary.scansWithImage, className: 'fill-image' },
+            { label: 'Segmentation', count: summary.scansWithSeg, className: 'fill-primary' },
+            { label: 'Mesh', count: summary.scansWithMesh, className: 'fill-secondary' },
+            { label: 'NURBS', count: summary.scansWithNurbs, className: 'fill-accent' }
         ];
         assets.forEach(asset => {
-            assetBarsRoot.appendChild(createBarRow(asset.label, asset.count, summary.totalSubjects, asset.className));
+            assetBarsRoot.appendChild(createBarRow(asset.label, asset.count, summary.totalScans, asset.className));
         });
 
         ageStatsRoot.innerHTML = '';
@@ -269,7 +285,7 @@
 
     function collectPopulation(data) {
         const people = [];
-        data.forEach(subject => {
+        uniqueSubjects(data).forEach(subject => {
             const gender = normalizeGender(subject['Gender']);
             const age = Number(subject['Age (years)']);
             if ((gender === 'Male' || gender === 'Female') && age > 0) {
@@ -486,7 +502,7 @@
             return;
         }
 
-        const subjects = typeof subjectsData !== 'undefined' && Array.isArray(subjectsData) ? subjectsData : [];
+        const subjects = typeof scansData !== 'undefined' && Array.isArray(scansData) ? scansData : [];
         const people = collectPopulation(subjects);
         if (people.length === 0) {
             chartRoot.innerHTML = '<p class="overview-empty">No subjects with both age and gender recorded.</p>';

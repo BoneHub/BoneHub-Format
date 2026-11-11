@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>BoneHub Dataset</title>
+    <title>{{TITLE}}</title>
     <link rel="stylesheet" href="styles.css">
 </head>
 
@@ -12,43 +12,27 @@
     <header>
         <div class="container">
             <div class="header-top">
-                <a href="https://bonehub.github.io" target="_blank" rel="noopener noreferrer" class="site-logo-link"
-                    title="Visit BoneHub">
-                    <img src="logo.png" alt="BoneHub logo" class="site-logo">
+                <a href="{{LOGO_LINK}}" target="_blank" rel="noopener noreferrer" class="site-logo-link">
+                    <img src="logo.png" alt="Logo" class="site-logo">
                 </a>
                 <div class="header-intro">
-                    <h1>BoneHub Dataset</h1>
-                    <p class="subtitle">A comprehensive, harmonized dataset for 3D bone shapes, medical images, and
-                        related metadata.</p>
+                    <h1>{{TITLE}}</h1>
+                    <p class="subtitle">{{SUBTITLE}}</p>
                 </div>
-                <a href="https://github.com/BoneHub/BoneHub-Dataset" target="_blank" rel="noopener noreferrer"
-                    class="github-link" title="View on GitHub">
-                    <svg width="48" height="48" viewBox="0 0 16 16" fill="white" xmlns="http://www.w3.org/2000/svg">
-                        <path
-                            d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z" />
-                    </svg>
-                </a>
+                {{LINKS}}
             </div>
-            <p class="note">
-                This dataset is a work in progress and will be updated regularly. If you have any questions,
-                suggestions, or would like to collaborate, please feel free to reach out to us via email.
-            </p>
+            {{NOTE}}
         </div>
     </header>
 
     <main class="container">
         <section class="about">
             <h2>📖 About</h2>
-            <p>
-                This dataset contains 3D bone shapes derived from public CT and MRI datasets, along with
-                associated metadata. The data is generated from public datasets, and is intended for biomedical
-                research.
-            </p>
+            {{ABOUT}}
         </section>
 
         <section class="overview-section">
             <h2>Dataset Overview</h2>
-            <!-- <p class="overview-subtitle">Auto-generated summary from the currently published subject metadata.</p> -->
 
             <div id="overviewMetrics" class="overview-metrics" aria-live="polite">
                 <!-- Overview metric cards are rendered by overview.js -->
@@ -95,16 +79,15 @@
         </section>
 
         <section class="search-section">
-            <h2>🔍 Browse Subjects</h2>
+            <h2>🔍 Browse Scans</h2>
             <div class="search-controls">
-                <input type="text" id="searchInput" placeholder="Search subjects..." aria-label="Search subjects">
+                <input type="text" id="searchInput" placeholder="Search scans..." aria-label="Search scans">
                 <button id="clearFilters" class="btn-secondary">Clear Filters</button>
                 <button id="toggleColumns" class="btn-secondary">Show/Hide Columns</button>
                 <button id="exportCSV" class="btn-export">📥 Export to CSV</button>
             </div>
             <div class="stats">
-                <span id="subjectCount">Loading subjects...</span>
-                </span>
+                <span id="scanCount">Loading scans...</span>
             </div>
             <div id="columnToggles" class="column-toggles" style="display: none;">
                 <h3>Select Columns to Display</h3>
@@ -114,7 +97,7 @@
             </div>
 
             <div class="table-container">
-                <table id="subjectsTable">
+                <table id="scansTable">
                     <thead>
                         <tr id="tableHeader">
                             <!-- Headers will be dynamically generated -->
@@ -165,21 +148,13 @@
             </div>
         </section>
 
-        <section class="contact">
-            <h2>📬 Contact</h2>
-            <p>This repository is maintained by <strong>Hamid Alavi</strong> and <strong>Malte Asseln</strong></p>
-            <p>Department of Biomechanical Engineering, University of Twente, The Netherlands</p>
-            <p>
-                <a href="mailto:hamid.alavi@utwente.nl">hamid.alavi@utwente.nl</a> |
-                <a href="mailto:m.asseln@utwente.nl">m.asseln@utwente.nl</a>
-            </p>
-        </section>
+        {{CONTACT}}
     </main>
 
     <script src="data.js"></script>
     <script src="overview.js"></script>
     <script src="app.js"></script>
-    <script data-goatcounter="https://bonehub-dataset.goatcounter.com/count" async src="//gc.zgo.at/count.js"></script>
+    {{ANALYTICS}}
 </body>
 
 </html>

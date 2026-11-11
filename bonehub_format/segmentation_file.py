@@ -4,7 +4,8 @@ Voxels hold per-file segment numbers (1, 2, 3 ...; uint8, or uint16 above 255 se
 in 3D Slicer's own segmentation files. The header maps each number to its BoneLabelMap
 label and records the segment's colour and bounding box.
 
-Requires numpy and SimpleITK: pip install "bonehub-dataset[io]".
+Reading and writing masks requires numpy and SimpleITK: pip install "bonehub-format[io]".
+The header functions (read_segmentation_labels, read_segmentation_header) need neither.
 """
 
 from __future__ import annotations
@@ -32,7 +33,7 @@ def _io_modules():
         import SimpleITK
     except ImportError as e:
         raise ImportError(
-            'Reading or writing BoneHub segmentation files needs numpy and SimpleITK: pip install "bonehub-dataset[io]"'
+            'Reading or writing BoneHub segmentation files needs numpy and SimpleITK: pip install "bonehub-format[io]"'
         ) from e
     return numpy, SimpleITK
 
@@ -171,16 +172,44 @@ def read_segmentation(path: Path) -> sitk.Image:
     return result
 
 
+def read_segmentation_header(path: Path) -> tuple[dict[str, str], dict[str, str]]:
+    """The fields ('sizes', 'type', ...) and the key/value pairs ('Segment0_Name', ...) of a `.seg.nrrd` header.
+
+    Reads only the plain-text header at the start of the file, without numpy or SimpleITK.
+    """
+    fields, pairs = {}, {}
+    with open(path, "rb") as f:
+        if not f.readline().startswith(b"NRRD"):
+            raise ValueError(f"'{path}' is not a NRRD file.")
+        for raw_line in f:
+            line = raw_line.decode("latin-1").rstrip("\r\n")
+            if not line:  # the header ends at the first empty line
+                break
+            if line.startswith("#"):
+                continue
+            if ":=" in line:
+                key, value = line.split(":=", 1)
+                pairs[key] = value
+            elif ": " in line:
+                key, value = line.split(": ", 1)
+                fields[key.lower()] = value
+    return fields, pairs
+
+
+def read_segmentation_segments(path: Path) -> tuple[tuple[int, ...], dict[str, tuple[int, ...] | None]]:
+    """The size of a mask's voxel grid and, per label, the segment's extent in voxels (x_min x_max y_min y_max z_min
+    z_max, as 3D Slicer writes it), read from the header only. The extent is None where the header has none."""
+    fields, pairs = read_segmentation_header(path)
+    sizes = tuple(int(size) for size in fields.get("sizes", "").split())
+    segments = {}
+    i = 0
+    while f"Segment{i}_Name" in pairs:
+        extent = pairs.get(f"Segment{i}_Extent")
+        segments[pairs[f"Segment{i}_Name"]] = tuple(int(v) for v in extent.split()) if extent else None
+        i += 1
+    return sizes, segments
+
+
 def read_segmentation_labels(path: Path) -> list[str]:
     """Read the names of the labels in a mask from its header only."""
-    _, sitk = _io_modules()
-
-    reader = sitk.ImageFileReader()
-    reader.SetFileName(str(path))
-    reader.ReadImageInformation()
-    labels = []
-    i = 0
-    while reader.HasMetaDataKey(f"Segment{i}_Name"):
-        labels.append(reader.GetMetaData(f"Segment{i}_Name"))
-        i += 1
-    return labels
+    return list(read_segmentation_segments(path)[1])

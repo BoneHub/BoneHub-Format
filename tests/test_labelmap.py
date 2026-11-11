@@ -1,8 +1,8 @@
 import unittest
 from collections import defaultdict
 
-from bonehub_data_schema import BoneLabelMap
-from bonehub_data_schema.labelmap import part_of, side_of, structure_of, tissue_of
+from bonehub_format import BoneLabelMap
+from bonehub_format.labelmap import part_of, side_of, structure_of, tissue_of
 
 LONG_BONES = {4300, 4400, 4500, 7100, 7300, 7400}  # humerus, ulna, radius, femur, tibia, fibula
 POSITIONS = {"PROXIMAL": 1, "MIDDLE": 2, "DISTAL": 3}

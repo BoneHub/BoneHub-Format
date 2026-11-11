@@ -1,4 +1,4 @@
-// Application logic for BoneHub public datasets and subjects tables
+// Application logic for the datasets and scans tables
 
 const NUMERIC_COLUMN_TOKENS = ['id', 'age', 'weight', 'height', 'bmi'];
 
@@ -9,7 +9,7 @@ document.addEventListener('DOMContentLoaded', function() {
         itemLabelPlural: 'datasets',
         emptyMessage: 'No datasets found matching your filters.',
         noDataMessage: 'No dataset metadata available.',
-        exportFilePrefix: 'bonehub_datasets',
+        exportFilePrefix: 'datasets',
         searchInputId: 'datasetSearchInput',
         clearButtonId: 'clearDatasetFilters',
         toggleColumnsButtonId: 'toggleDatasetColumns',
@@ -23,17 +23,17 @@ document.addEventListener('DOMContentLoaded', function() {
     });
 
     initializeTableController({
-        data: typeof subjectsData !== 'undefined' ? subjectsData : [],
-        itemLabel: 'subject',
-        itemLabelPlural: 'subjects',
-        emptyMessage: 'No subjects found matching your filters.',
+        data: typeof scansData !== 'undefined' ? scansData : [],
+        itemLabel: 'scan',
+        itemLabelPlural: 'scans',
+        emptyMessage: 'No scans found matching your filters.',
         noDataMessage: 'Dataset not loaded. Please run the update script.',
-        exportFilePrefix: 'bonehub_subjects',
+        exportFilePrefix: 'scans',
         searchInputId: 'searchInput',
         clearButtonId: 'clearFilters',
         toggleColumnsButtonId: 'toggleColumns',
         exportButtonId: 'exportCSV',
-        countId: 'subjectCount',
+        countId: 'scanCount',
         columnTogglesId: 'columnToggles',
         columnCheckboxesId: 'columnCheckboxes',
         tableHeaderId: 'tableHeader',
@@ -52,10 +52,10 @@ function initializeTableController(config) {
         allColumns: [],
         sortColumn: null,
         sortDirection: 'asc',
-        isPaginated: config.itemLabel === 'subject',
-        pageSize: config.itemLabel === 'subject' ? 200 : 0,
+        isPaginated: config.itemLabel === 'scan',
+        pageSize: config.itemLabel === 'scan' ? 200 : 0,
         currentPage: 1,
-        filterDebounceMs: config.itemLabel === 'subject' ? 120 : 0,
+        filterDebounceMs: config.itemLabel === 'scan' ? 120 : 0,
         filterTimer: null,
         cellValueCache: new WeakMap(),
         rowSearchCache: new WeakMap(),
@@ -738,11 +738,11 @@ function isNumericColumn(columnName) {
 }
 
 function shouldUseExpandableCell(state, column, value) {
-    if (state.itemLabel !== 'subject') {
+    if (state.itemLabel !== 'scan') {
         return false;
     }
 
-    if (!['Segmentation Available', 'Mesh Available', 'NURBS Available'].includes(column)) {
+    if (!['Segmentation Available', 'Mesh Available', 'NURBS Available', 'Touching Image Border'].includes(column)) {
         return false;
     }
 

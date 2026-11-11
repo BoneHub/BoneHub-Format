@@ -1,14 +1,19 @@
+"""Convert the first subjects of each source dataset with the private converters, then read and validate them.
+
+Needs the private custom_dataset_io submodule and the source datasets in PUBLIC_DATASETS; skipped without them.
+"""
+
 import os
 
 os.environ["MAX_SUBJECTS_FOR_TESTING"] = "2"  # Set a limit for testing purposes
 
-from pathlib import Path
 import unittest
+from pathlib import Path
 
-from bonehub_data_schema import BoneHubDatasetIO
+from bonehub_format import Root, validate
 
 try:
-    import bonehub_dataset_converter.custom_dataset_io as custom_dataset_io
+    import bonehub_format.custom_dataset_io as custom_dataset_io
 except ImportError:
     custom_dataset_io = None
 
@@ -16,170 +21,81 @@ except ImportError:
 if not hasattr(custom_dataset_io, "__all__"):
     raise unittest.SkipTest("custom_dataset_io submodule is not available.")
 
-_BONEHUB_DATASET_ROOT = Path("./tests/dummy_bonehub_dataset")
+PUBLIC_DATASETS = Path("Z:/BoneHub/Public_Datasets")
+if not PUBLIC_DATASETS.is_dir():
+    raise unittest.SkipTest(f"The source datasets are not available in {PUBLIC_DATASETS}.")
+
+OUTPUT_ROOT = Path(__file__).resolve().parent / "dummy_bonehub_dataset"
 
 
-# @unittest.skip("")
-class TestBoneDat(unittest.TestCase):
-    def test_convert(self):
+class _ConvertAndRead:
+    converter: str  # class name in custom_dataset_io
+    source: str  # folder in PUBLIC_DATASETS
+    dataset_id: int
+    subjects = 2  # MAX_SUBJECTS_FOR_TESTING per list of subjects the converter reads
 
-        public_datasets_root = Path("Z:/BoneHub/Public_Datasets/124 BoneDat/BoneDat")
-        public_dataset = custom_dataset_io.BoneDat(public_datasets_root)
-        public_dataset.export_to_bonehub_format(output_root=_BONEHUB_DATASET_ROOT, output_dataset_id=1, overwrite=True)
+    def test_convert_and_read(self):
+        converter = getattr(custom_dataset_io, self.converter)(PUBLIC_DATASETS / self.source)
+        converter.export_to_bonehub_format(OUTPUT_ROOT, self.dataset_id, overwrite=True, verbose=False)
 
-    def test_read(self):
-        dataset = BoneHubDatasetIO(_BONEHUB_DATASET_ROOT, dataset_id=1)
-
-        self.assertEqual(dataset.dataset_info.dataset_id, 1)
-        self.assertEqual(dataset.subject_info[0].subject_id, 1)
-        self.assertEqual(len(dataset), 2)
-        self.assertTrue(dataset.check_dataset_integrity())
-
-
-# @unittest.skip("")
-class TestKits2023(unittest.TestCase):
-    def test_convert(self):
-        public_datasets_root = Path("Z:/BoneHub/Public_Datasets/073 kits23")
-        public_dataset = custom_dataset_io.KiTS2023(public_datasets_root)
-        public_dataset.export_to_bonehub_format(output_root=_BONEHUB_DATASET_ROOT, output_dataset_id=2, overwrite=True)
-
-    def test_read(self):
-        dataset = BoneHubDatasetIO(_BONEHUB_DATASET_ROOT, dataset_id=2)
-
-        self.assertEqual(dataset.dataset_info.dataset_id, 2)
-        self.assertEqual(dataset.subject_info[0].subject_id, 1)
-        self.assertEqual(len(dataset), 2)
-        self.assertTrue(dataset.check_dataset_integrity())
+        dataset = Root(OUTPUT_ROOT).dataset(self.dataset_id)
+        self.assertEqual(len(dataset), self.subjects)
+        self.assertEqual([s.id for s in dataset.subjects()], list(range(1, self.subjects + 1)))
+        for scan in dataset.scans():
+            self.assertIsNotNone(scan.image_path, scan.key)
+            self.assertIsNotNone(scan.license, scan.key)
+        problems = [p for p in validate(OUTPUT_ROOT) if dataset.path.name in p]
+        self.assertEqual(problems, [])
 
 
-# @unittest.skip("")
-class TestSpineMetsCTSeg(unittest.TestCase):
-    def test_convert(self):
-        public_datasets_root = Path("Z:/BoneHub/Public_Datasets/019 TCIA Spine-Mets-CT-SEG")
-        public_dataset = custom_dataset_io.SpineMetsCTSeg(public_datasets_root)
-        public_dataset.export_to_bonehub_format(output_root=_BONEHUB_DATASET_ROOT, output_dataset_id=3, overwrite=True)
-
-    def test_read(self):
-        dataset = BoneHubDatasetIO(_BONEHUB_DATASET_ROOT, dataset_id=3)
-
-        self.assertEqual(dataset.dataset_info.dataset_id, 3)
-        self.assertEqual(dataset.subject_info[0].subject_id, 1)
-        self.assertEqual(len(dataset), 2)
-        self.assertTrue(dataset.check_dataset_integrity())
+class TestBoneDat(_ConvertAndRead, unittest.TestCase):
+    converter, source, dataset_id = "BoneDat", "124 BoneDat/BoneDat", 1
 
 
-# @unittest.skip("")
-class TestACRIN6664(unittest.TestCase):
-    def test_convert(self):
-        public_datasets_root = Path("Z:/BoneHub/Public_Datasets/070 TCIA CT COLONOGRAPHY ACRIN 6664")
-        public_dataset = custom_dataset_io.ACRIN6664(public_datasets_root)
-        public_dataset.export_to_bonehub_format(output_root=_BONEHUB_DATASET_ROOT, output_dataset_id=4, overwrite=True)
-
-    def test_read(self):
-        dataset = BoneHubDatasetIO(_BONEHUB_DATASET_ROOT, dataset_id=4)
-
-        self.assertEqual(dataset.dataset_info.dataset_id, 4)
-        self.assertEqual(dataset.subject_info[0].subject_id, 1)
-        self.assertEqual(len(dataset), 4)
-        # The ACRIN 6664 dataset contains 4 valid subjects after applying the file count filter, even with the MAX_SUBJECTS_FOR_TESTING limit set to 2.
-        # This is because the limit is applied to the number of subjects processed, but each subject may contain multiple valid subdirectories that are included in the dataset.
-        # Therefore, we expect to have 4 valid subjects in total after processing the dataset, which is reflected in this assertion.
-        self.assertTrue(dataset.check_dataset_integrity())
+class TestKiTS2023(_ConvertAndRead, unittest.TestCase):
+    converter, source, dataset_id = "KiTS2023", "073 kits23", 2
 
 
-# @unittest.skip("")
-class TestVSDReconstruction(unittest.TestCase):
-    def test_convert(self):
-        data_root = Path(
-            "Z:/BoneHub/Public_Datasets/036 VSDFullBodyBoneReconstruction/Hamid_processed/vsd-lower-extremities-seg"
-        )
-        public_dataset = custom_dataset_io.VSDReconstruction(data_root)
-        public_dataset.export_to_bonehub_format(output_root=_BONEHUB_DATASET_ROOT, output_dataset_id=5, overwrite=True)
-
-    def test_read(self):
-        dataset = BoneHubDatasetIO(_BONEHUB_DATASET_ROOT, dataset_id=5)
-
-        self.assertEqual(dataset.dataset_info.dataset_id, 5)
-        self.assertEqual(dataset.subject_info[0].subject_id, 1)
-        self.assertEqual(len(dataset), 2)
-        self.assertTrue(dataset.check_dataset_integrity())
+class TestSpineMetsCTSeg(_ConvertAndRead, unittest.TestCase):
+    converter, source, dataset_id = "SpineMetsCTSeg", "019 TCIA Spine-Mets-CT-SEG", 3
 
 
-# @unittest.skip("")
-class TestEnhancePET(unittest.TestCase):
-    def test_convert(self):
-        data_root = Path("Z:/BoneHub/Public_Datasets/134 enhance-pet-1_6k")
-        public_dataset = custom_dataset_io.EnhancePET(data_root)
-        public_dataset.export_to_bonehub_format(output_root=_BONEHUB_DATASET_ROOT, output_dataset_id=6, overwrite=True)
-
-    def test_read(self):
-        dataset = BoneHubDatasetIO(_BONEHUB_DATASET_ROOT, dataset_id=6)
-
-        self.assertEqual(dataset.dataset_info.dataset_id, 6)
-        self.assertEqual(dataset.subject_info[0].subject_id, 1)
-        self.assertEqual(len(dataset), 2)
-        self.assertTrue(dataset.check_dataset_integrity())
+class TestEnhancePET(_ConvertAndRead, unittest.TestCase):
+    converter, source, dataset_id = "EnhancePET", "134 enhance-pet-1_6k", 4
 
 
-# @unittest.skip("")
-class TestTotalSegmentatorCT(unittest.TestCase):
-    def test_convert(self):
-        data_root = Path("Z:/BoneHub/Public_Datasets/027 Totalsegmentator/raw_data")
-        public_dataset = custom_dataset_io.TotalSegmentatorCT(data_root)
-        public_dataset.export_to_bonehub_format(output_root=_BONEHUB_DATASET_ROOT, output_dataset_id=7, overwrite=True)
-
-    def test_read(self):
-        dataset = BoneHubDatasetIO(_BONEHUB_DATASET_ROOT, dataset_id=7)
-
-        self.assertEqual(dataset.dataset_info.dataset_id, 7)
-        self.assertEqual(dataset.subject_info[0].subject_id, 1)
-        self.assertEqual(len(dataset), 2)
-        self.assertTrue(dataset.check_dataset_integrity())
+class TestVSDReconstruction(_ConvertAndRead, unittest.TestCase):
+    converter, dataset_id = "VSDReconstruction", 5
+    source = "036 VSDFullBodyBoneReconstruction/Hamid_processed/vsd-lower-extremities-seg"
 
 
-class TestPENGWIN(unittest.TestCase):
-    def test_convert(self):
-        data_root = Path("Z:/BoneHub/Public_Datasets/106 PENGWIN")
-        public_dataset = custom_dataset_io.PENGWIN(data_root)
-        public_dataset.export_to_bonehub_format(output_root=_BONEHUB_DATASET_ROOT, output_dataset_id=8, overwrite=True)
-
-    def test_read(self):
-        dataset = BoneHubDatasetIO(_BONEHUB_DATASET_ROOT, dataset_id=8)
-
-        self.assertEqual(dataset.dataset_info.dataset_id, 8)
-        self.assertEqual(dataset.subject_info[0].subject_id, 1)
-        self.assertEqual(len(dataset), 2)
-        self.assertTrue(dataset.check_dataset_integrity())
+class TestTotalSegmentatorCT(_ConvertAndRead, unittest.TestCase):
+    converter, source, dataset_id = "TotalSegmentatorCT", "027 Totalsegmentator/raw_data", 6
 
 
-class TestCTPEL(unittest.TestCase):
-    def test_convert(self):
-        data_root = Path("Z:/BoneHub/Public_Datasets/138 CTPEL")
-        public_dataset = custom_dataset_io.CTPEL(data_root)
-        public_dataset.export_to_bonehub_format(output_root=_BONEHUB_DATASET_ROOT, output_dataset_id=9, overwrite=True)
-
-    def test_read(self):
-        dataset = BoneHubDatasetIO(_BONEHUB_DATASET_ROOT, dataset_id=9)
-
-        self.assertEqual(dataset.dataset_info.dataset_id, 9)
-        self.assertEqual(dataset.subject_info[0].subject_id, 1)
-        self.assertEqual(len(dataset), 2)
-        self.assertTrue(dataset.check_dataset_integrity())
+class TestCTPelvic1K(_ConvertAndRead, unittest.TestCase):
+    converter, source, dataset_id = "CTPelvic1K", "044 CTPelvic1K", 7
 
 
-class TestVSDFullBody(unittest.TestCase):
-    def test_convert(self):
-        data_root = Path("Z:/BoneHub/Public_Datasets/071 VSDFullBody")
-        public_dataset = custom_dataset_io.VSDFullBody(data_root)
-        public_dataset.export_to_bonehub_format(output_root=_BONEHUB_DATASET_ROOT, output_dataset_id=11, overwrite=True)
+class TestPENGWIN(_ConvertAndRead, unittest.TestCase):
+    converter, source, dataset_id = "PENGWIN", "106 PENGWIN", 8
 
-    def test_read(self):
-        dataset = BoneHubDatasetIO(_BONEHUB_DATASET_ROOT, dataset_id=11)
 
-        self.assertEqual(dataset.dataset_info.dataset_id, 11)
-        self.assertEqual(dataset.subject_info[0].subject_id, 1)
-        self.assertEqual(len(dataset), 2)
-        self.assertTrue(dataset.check_dataset_integrity())
+class TestCTPEL(_ConvertAndRead, unittest.TestCase):
+    converter, source, dataset_id = "CTPEL", "138 ctpel", 9
+
+
+class TestSynthRAD2023(_ConvertAndRead, unittest.TestCase):
+    converter, source, dataset_id = "SynthRAD2023", "006 SynthRAD2023", 10
+    subjects = 6  # 2 each of Task1 train (CT + MR), Task1 validation (MR) and Task2 (CT)
+
+
+class TestVSDFullBody(_ConvertAndRead, unittest.TestCase):
+    converter, source, dataset_id = "VSDFullBody", "071 VSDFullBody", 11
+
+
+class TestACRIN6664(_ConvertAndRead, unittest.TestCase):
+    converter, source, dataset_id = "ACRIN6664", "070 TCIA CT COLONOGRAPHY ACRIN 6664", 12
 
 
 if __name__ == "__main__":

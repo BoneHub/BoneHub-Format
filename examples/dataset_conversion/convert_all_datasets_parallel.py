@@ -2,24 +2,21 @@
 
 Run from the repository root with the package installed (pip install -e ".[converter]")
 and the MAX_SUBJECTS_FOR_TESTING environment variable unset; see --help for all options.
-Each dataset writes a log into its Dataset_XXX folder, naming any subject that failed with its traceback;
-the other subjects are still converted. The run's own log (Conversion_*.log in the output root) ends with a
+Each dataset writes a log into <output-root>/logs, naming any subject that failed with its traceback;
+the other subjects are still converted. The run's own log (logs/conversion_*.log) ends with a
 summary of which datasets succeeded and which failed.
 
-To regenerate segmentations, meshes and subject info but keep the exported images:
-1. In each Dataset_XXX folder keep Image/ and Subject_info_XXX.json, and delete
-   Segmentation/, Mesh/ and NURBS/.
-2. Convert one dataset and check its masks in 3D Slicer:
+Convert everything again (sized for 32 GB of RAM):
 
-       python examples/dataset_conversion/convert_all_datasets_parallel.py --output-root Z:/BoneHub/BoneHub_Dataset --skip-existing-images --datasets vsd_reconstruction
+    python examples/dataset_conversion/convert_all_datasets_parallel.py --output-root Z:/BoneHub/BoneHub_Dataset --overwrite --max-workers 3 --subject-workers 4
 
-3. Convert everything (sized for 32 GB of RAM):
+Convert only the subjects that failed (or were not reached) in an earlier run:
 
-       python examples/dataset_conversion/convert_all_datasets_parallel.py --output-root Z:/BoneHub/BoneHub_Dataset --skip-existing-images --max-workers 3 --subject-workers 4
+    python examples/dataset_conversion/convert_all_datasets_parallel.py --output-root Z:/BoneHub/BoneHub_Dataset --resume --datasets vsd_reconstruction
 
-    To retry only the subjects that failed (or were not reached) in an earlier run:
+Afterwards, get the root ready to upload (see the README):
 
-       python examples/dataset_conversion/convert_all_datasets_parallel.py --output-root Z:/BoneHub/BoneHub_Dataset --skip-existing-subjects --datasets vsd_reconstruction
+    python -m bonehub_format prepare Z:/BoneHub/BoneHub_Dataset --repo-id BoneHub/BoneHub-Dataset --title "BoneHub Dataset"
 """
 
 from __future__ import annotations
@@ -33,7 +30,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Sequence
 
-import bonehub_dataset_converter.custom_dataset_io as custom_dataset_io
+import bonehub_format.custom_dataset_io as custom_dataset_io
+from bonehub_format import layout
 
 
 @dataclass(frozen=True)
@@ -136,10 +134,16 @@ def parse_args() -> argparse.Namespace:
         choices=[job.name for job in DATASET_JOBS],
         help="Optional subset of dataset names to convert.",
     )
-    parser.add_argument(
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument(
         "--overwrite",
         action="store_true",
-        help="Overwrite existing output dataset folders if they already exist.",
+        help="Delete the existing dataset folders and convert them again.",
+    )
+    mode.add_argument(
+        "--resume",
+        action="store_true",
+        help="Keep the subjects an earlier run finished and convert the rest (e.g. those that failed).",
     )
     parser.add_argument(
         "--subject-workers",
@@ -155,17 +159,6 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Hide the per-dataset progress bars.",
     )
-    parser.add_argument(
-        "--skip-existing-images",
-        action="store_true",
-        help="Keep exported images whose source subject is unchanged and regenerate everything else. " "Implies --overwrite.",
-    )
-    parser.add_argument(
-        "--skip-existing-subjects",
-        action="store_true",
-        help="Convert only the subjects missing from Subject_info_XXX.json (e.g. those that failed or were not "
-        "reached in an earlier run) and keep the rest. Implies --overwrite.",
-    )
     return parser.parse_args()
 
 
@@ -180,28 +173,27 @@ def convert_dataset(
     job: DatasetJob,
     output_root: Path,
     overwrite: bool,
+    resume: bool,
     verbose: bool,
-    skip_existing_images: bool = False,
     subject_workers: int | None = None,
-    skip_existing_subjects: bool = False,
 ) -> Path:
     dataset = job.dataset_class(job.source_root)
     return dataset.export_to_bonehub_format(
         output_root=output_root,
         output_dataset_id=job.dataset_id,
-        overwrite=overwrite or skip_existing_images or skip_existing_subjects,
+        overwrite=overwrite,
+        resume=resume,
         num_workers=subject_workers,
-        skip_existing_subjects=skip_existing_subjects,
-        skip_existing_images=skip_existing_images,
         verbose=verbose,
     )
 
 
 def setup_run_logger(output_root: Path) -> logging.Logger:
-    """Log to the console and to a run log in output_root, next to the Dataset_XXX folders."""
-    output_root.mkdir(parents=True, exist_ok=True)
-    log_file_path = output_root / f"Conversion_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
-    file_handler = logging.FileHandler(log_file_path, mode="w")
+    """Log to the console and to a run log in <output_root>/logs, next to the logs of the datasets."""
+    log_dir = output_root / layout.LOGS_DIR
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_file_path = log_dir / f"conversion_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
+    file_handler = logging.FileHandler(log_file_path, mode="w", encoding="utf-8")
     file_handler.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(message)s"))
     logger = logging.getLogger("convert_all_datasets")
     logger.setLevel(logging.INFO)
@@ -215,14 +207,14 @@ def log_summary(
 ) -> None:
     lines = [f"Conversion summary: {len(successes)} succeeded, {len(failures)} failed."]
     for job, log_file_path in sorted(successes, key=lambda item: item[0].dataset_id):
-        lines.append(f"  [OK]     {job.name} (Dataset_{job.dataset_id:03d}), log: {log_file_path}")
+        lines.append(f"  [OK]     {job.name} ({layout.dataset_dir_name(job.dataset_id)}), log: {log_file_path}")
     for job, exc in sorted(failures, key=lambda item: item[0].dataset_id):
-        lines.append(f"  [FAILED] {job.name} (Dataset_{job.dataset_id:03d}): {exc}")
+        lines.append(f"  [FAILED] {job.name} ({layout.dataset_dir_name(job.dataset_id)}): {exc}")
     if failures:
         lines.append(
-            "Refer to each failed dataset's log file to see which subjects failed and why. Subjects that failed are "
-            "null in Subject_info_XXX.json; the other subjects were converted and saved. "
-            "Run again with --skip-existing-subjects to convert only the missing subjects."
+            "Refer to each failed dataset's log file to see which subjects failed and why. The subjects that failed "
+            "have no folder; the other subjects were converted and saved. Run again with --resume to convert only "
+            "the missing subjects."
         )
     logger.log(logging.ERROR if failures else logging.INFO, "\n".join(lines))
 
@@ -254,10 +246,9 @@ def main() -> int:
                 job,
                 output_root,
                 args.overwrite,
+                args.resume,
                 not args.quiet,
-                args.skip_existing_images,
                 args.subject_workers,
-                args.skip_existing_subjects,
             ): job
             for job in jobs
         }
@@ -265,10 +256,10 @@ def main() -> int:
             job = future_to_job[future]
             try:
                 successes.append((job, future.result()))
-                logger.info(f"[OK] {job.name} -> Dataset_{job.dataset_id:03d}")
+                logger.info(f"[OK] {job.name} -> {layout.dataset_dir_name(job.dataset_id)}")
             except Exception as exc:
                 failures.append((job, exc))
-                logger.error(f"[FAILED] {job.name} -> Dataset_{job.dataset_id:03d}: {exc}")
+                logger.error(f"[FAILED] {job.name} -> {layout.dataset_dir_name(job.dataset_id)}: {exc}")
 
     log_summary(logger, successes, failures)
     return 1 if failures else 0

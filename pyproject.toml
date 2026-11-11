@@ -3,56 +3,53 @@ requires = ["setuptools>=61.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "bonehub-dataset"
-version = "0.3.0"
-description = "A Python package for generating the BoneHub Dataset, including data schema, dataset conversion, segmentation tools, and more."
+name = "bonehub-format"
+version = "1.0.0"
+description = "The BoneHub data format for 3D bone datasets, and the tools to convert, check and publish datasets in it."
 readme = "README.md"
 requires-python = ">=3.10"
 authors = [
     {name = "Hamid Alavi"}
 ]
 
-# The base install carries the data schema only: `bonehub_data_schema` needs nothing but
-# pydantic, so downstream projects that merely read or write BoneHub metadata (such as
-# the quality-check server) can depend on this package without pulling in torch, monai,
-# ITK and the rest of the conversion stack. Everything heavier lives in an extra below.
+# The base install reads, validates and packs BoneHub-format datasets and needs only pydantic, so that projects which
+# only read or write the metadata (such as the quality-check server) do not pull in ITK, DICOM or Parquet libraries.
 dependencies = [
     "pydantic>=2.0",
 ]
 
 [project.optional-dependencies]
-# Reading and writing BoneHub segmentation files (.seg.nrrd).
+# Reading and writing segmentation masks (.seg.nrrd).
 io = [
     "numpy",
     "SimpleITK",
 ]
-# Converting third-party datasets into BoneHub data structure format.
+# Converting source datasets, and building the index, links, Hugging Face files and webpage of a root.
 converter = [
     "numpy",
+    "SimpleITK",
     "pydicom>=3.0.1",
     "highdicom>=0.28",
     "nibabel",
-    "SimpleITK",
     "pandas",
     "openpyxl",
     "tqdm",
-]
-# Running the segmentation models.
-segmentation = [
-    "numpy",
-    "monai",
-    "torch",
-    "torchvision",
-    "nibabel",
-    "pyyaml",
+    "pyarrow",
 ]
 all = [
-    "bonehub-dataset[converter,segmentation]",
+    "bonehub-format[converter]",
 ]
+
+[project.scripts]
+bonehub-format = "bonehub_format.__main__:main"
 
 [tool.setuptools.packages.find]
 include = [
-    "bonehub_data_schema*",
-    "bonehub_dataset_converter*",
-    "bonehub_segmentation*",
+    "bonehub_format*",
+]
+
+[tool.setuptools.package-data]
+bonehub_format = [
+    "webpage_template/*",
+    "webpage_template/.nojekyll",
 ]

@@ -1,29 +1,117 @@
+"""Helpers for converters: reading source images and writing BoneHub images and segmentations.
+
+Requires the converter extra: pip install "bonehub-format[converter]".
+"""
+
 import os
+import re
 from pathlib import Path
+
 import highdicom
 import numpy as np
 import pydicom
 import SimpleITK as sitk
 
-from bonehub_data_schema import segment_number_dtype, write_indexed_segmentation
+from .segmentation_file import segment_number_dtype, write_indexed_segmentation
+
+# Slices checked at a time, to limit memory.
+_CHUNK_SLICES = 32
+_INT16 = np.iinfo(np.int16)
 
 
-def export_image(input_image_path: Path, output_image_path: Path):
+def read_image(input_path: Path) -> sitk.Image:
+    """An image file, or the first DICOM series of a folder.
+
+    A NIfTI image whose direction cosines are slightly off orthonormal, which ITK refuses to read, is read with the
+    nearest orthonormal directions instead (see read_nifti_orthonormalized).
     """
-    Converts original images to float32 NIfTI format (nii.gz) and saves the result.
-    input_image_path: Path to the original image file or folder (in case of DICOM series; the first series found is used).
-    output_image_path: Path to save the converted image file ending with `.nii.gz`.
-    """
-    if Path(input_image_path).is_dir():
+    if Path(input_path).is_dir():
         series_reader = sitk.ImageSeriesReader()
-        series_files = series_reader.GetGDCMSeriesFileNames(str(input_image_path))
+        series_files = series_reader.GetGDCMSeriesFileNames(str(input_path))
         if not series_files:
-            raise FileNotFoundError(f"No DICOM series found in '{input_image_path}'.")
+            raise FileNotFoundError(f"No DICOM series found in '{input_path}'.")
         series_reader.SetFileNames(series_files)
-        image = series_reader.Execute()
-    else:
-        image = sitk.ReadImage(str(input_image_path))
-    sitk.WriteImage(sitk.Cast(image, sitk.sitkFloat32), str(output_image_path), useCompression=True)
+        return series_reader.Execute()
+    try:
+        return sitk.ReadImage(str(input_path))
+    except RuntimeError as e:
+        if "orthonormal" not in str(e) or not str(input_path).lower().endswith((".nii", ".nii.gz")):
+            raise
+        return read_nifti_orthonormalized(input_path)
+
+
+_RAS_TO_LPS = np.diag([-1.0, -1.0, 1.0])
+#: Largest deviation from orthonormal directions that read_nifti_orthonormalized corrects.
+MAX_DIRECTION_ERROR = 1e-2
+
+
+def read_nifti_orthonormalized(input_path: Path) -> sitk.Image:
+    """A 3D NIfTI image with the nearest orthonormal direction cosines to those of its header.
+
+    Some sources (e.g. TotalSegmentator) store an sform whose directions are off orthonormal by rounding (about 2e-4),
+    and no qform; ITK refuses to read such a file. Here the voxel spacing is the length of each column of the affine,
+    and the directions are the nearest orthonormal matrix to the normalised columns, which moves no voxel by more
+    than a fraction of a millimetre for directions this close.
+    """
+    import nibabel as nib
+
+    nifti = nib.load(str(input_path))
+    if len(nifti.shape) != 3:
+        raise ValueError(f"'{input_path}' is not a 3D image.")
+    affine = nifti.affine
+    spacing = np.linalg.norm(affine[:3, :3], axis=0)
+    directions = affine[:3, :3] / spacing
+    u, _, vt = np.linalg.svd(directions)
+    orthonormal = u @ vt
+    if np.abs(orthonormal - directions).max() > MAX_DIRECTION_ERROR:
+        raise ValueError(f"The directions of '{input_path}' are too far from orthonormal to correct.")
+    image = sitk.GetImageFromArray(np.asarray(nifti.dataobj).transpose())  # NIfTI is x-fastest, like ITK
+    image.SetSpacing([float(s) for s in spacing])
+    image.SetOrigin([float(v) for v in _RAS_TO_LPS @ affine[:3, 3]])
+    image.SetDirection([float(v) for v in (_RAS_TO_LPS @ orthonormal).flatten()])
+    return image
+
+
+def _fits_int16(array: np.ndarray, integers_only: bool) -> bool:
+    for start in range(0, array.shape[0], _CHUNK_SLICES):
+        chunk = array[start : start + _CHUNK_SLICES]
+        low, high = chunk.min(), chunk.max()
+        if not (np.isfinite(low) and np.isfinite(high)) or low < _INT16.min or high > _INT16.max:
+            return False
+        if integers_only and not np.array_equal(chunk, np.rint(chunk)):
+            return False
+    return True
+
+
+def compact_image(image: sitk.Image) -> sitk.Image:
+    """The image in a pixel type that holds its values exactly and takes the least space.
+
+    Floating point images whose values are all integers in the int16 range (as CT values in HU are) become int16, and
+    so do integer images wider than 16 bits whose values fit; other float64 images become float32. The rest is kept.
+    """
+    if image.GetNumberOfComponentsPerPixel() != 1:
+        return image
+    array = sitk.GetArrayViewFromImage(image)
+    if array.size == 0:
+        return image
+    if np.issubdtype(array.dtype, np.floating):
+        if _fits_int16(array, integers_only=True):
+            return sitk.Cast(image, sitk.sitkInt16)
+        if array.dtype == np.float64:
+            return sitk.Cast(image, sitk.sitkFloat32)
+    elif np.issubdtype(array.dtype, np.integer) and array.dtype.itemsize > 2 and _fits_int16(array, integers_only=False):
+        return sitk.Cast(image, sitk.sitkInt16)
+    return image
+
+
+def write_image(image: sitk.Image, output_path: Path) -> None:
+    """Write an image as BoneHub stores it: compressed, in the pixel type compact_image chooses."""
+    sitk.WriteImage(compact_image(image), str(output_path), useCompression=True)
+
+
+def export_image(input_path: Path, output_path: Path) -> None:
+    """Convert an image file or DICOM folder (see read_image) to `output_path` (see write_image)."""
+    write_image(read_image(input_path), output_path)
 
 
 def export_nii_segmentation(
@@ -148,10 +236,7 @@ def export_dicom_segmentation(
     seg_image_mapped.CopyInformation(seg_image)
 
     # Read the reference image series with SimpleITK (preserves LPS orientation)
-    series_reader = sitk.ImageSeriesReader()
-    series_files = series_reader.GetGDCMSeriesFileNames(input_image_path)
-    series_reader.SetFileNames(series_files)
-    ref_image = series_reader.Execute()
+    ref_image = read_image(input_image_path)
 
     # Resample segmentation directly in physical space to match the reference image
     resampler = sitk.ResampleImageFilter()
@@ -165,28 +250,28 @@ def export_dicom_segmentation(
     )
 
 
-def get_dicom_subject_metadata(dicom_folder: str) -> dict:
+_DICOM_AGE = re.compile(r"(\d{1,3})([DWMY]?)")
+_DAYS_PER_UNIT = {"D": 1, "W": 7, "M": 365.25 / 12, "Y": 365.25, "": 365.25}
+
+
+def _dicom_age(value: str | None) -> int | None:
+    """Age in years from a DICOM age string such as '065Y' or '018M'."""
+    match = _DICOM_AGE.fullmatch((value or "").strip().upper())
+    if not match:
+        return None
+    return int(int(match.group(1)) * _DAYS_PER_UNIT[match.group(2)] // 365.25)
+
+
+def get_dicom_metadata(dicom_folder: Path) -> dict:
+    """Age (years), gender (M, F, O or None) and modality from the header of the first file of a DICOM folder."""
     first_file = next(f for f in os.listdir(dicom_folder) if f.endswith(".dcm") or f.endswith(".dicom"))
     ds = pydicom.dcmread(os.path.join(dicom_folder, first_file), stop_before_pixels=True)
-    age = getattr(ds, "PatientAge", None)
-    if age:
-        age = "".join(filter(str.isdigit, age))
-        age = int(age)
-    else:
-        age = None
-    gender = getattr(ds, "PatientSex", None)
-    if gender:
-        gender = gender.upper()
-        if gender not in ["M", "F", "O"]:
-            print(
-                f"Warning: Unrecognized gender value '{gender}' in DICOM data folder '{dicom_folder}'. Setting gender to None."
-            )
-            gender = None
-
-    modality = getattr(ds, "Modality", None)
-
+    gender = (getattr(ds, "PatientSex", None) or "").strip().upper() or None
+    if gender not in (None, "M", "F", "O"):
+        print(f"Warning: Unrecognized gender value '{gender}' in DICOM data folder '{dicom_folder}'. Setting gender to None.")
+        gender = None
     return {
-        "age": age,
+        "age": _dicom_age(getattr(ds, "PatientAge", None)),
         "gender": gender,
-        "modality": modality,
+        "modality": getattr(ds, "Modality", None) or None,
     }

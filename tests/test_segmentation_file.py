@@ -3,10 +3,11 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from bonehub_data_schema import (
+from bonehub_format import (
     BoneLabelMap,
     read_segmentation,
     read_segmentation_labels,
+    read_segmentation_segments,
     write_indexed_segmentation,
     write_segmentation,
 )
@@ -14,7 +15,7 @@ from bonehub_data_schema import (
 HAS_IO = all(importlib.util.find_spec(m) is not None for m in ("numpy", "SimpleITK"))
 
 
-@unittest.skipUnless(HAS_IO, 'needs the io extra: pip install "bonehub-dataset[io]"')
+@unittest.skipUnless(HAS_IO, 'needs the io extra: pip install "bonehub-format[io]"')
 class TestSegmentationFile(unittest.TestCase):
     def setUp(self):
         import numpy as np
@@ -33,6 +34,10 @@ class TestSegmentationFile(unittest.TestCase):
 
         self.assertEqual(written, ["FEMUR_LEFT", "FEMUR_PROXIMAL_CORTICAL_LEFT"])
         self.assertEqual(read_segmentation_labels(path), written)
+        # the header alone gives the grid size (x, y, z) and each segment's extent, without SimpleITK
+        sizes, segments = read_segmentation_segments(path)
+        self.assertEqual(sizes, (8, 8, 4))
+        self.assertEqual(segments, {"FEMUR_LEFT": (0, 7, 0, 7, 0, 1), "FEMUR_PROXIMAL_CORTICAL_LEFT": (0, 7, 0, 3, 2, 3)})
         bonehub = self.sitk.GetArrayFromImage(read_segmentation(path))
         self.assertTrue(self.np.array_equal(bonehub, self.array))
 

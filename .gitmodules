@@ -1,4 +1,4 @@
 [submodule "bonehub_dataset_converter/custom_dataset_io"]
-	path = bonehub_dataset_converter/custom_dataset_io
+	path = bonehub_format/custom_dataset_io
 	url = https://github.com/BoneHub/custom_dataset_io.git
 	branch = main

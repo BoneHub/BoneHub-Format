@@ -3,7 +3,7 @@ from enum import Enum, unique
 
 @unique
 class BoneLabelMap(Enum):
-    """Unified bone labels.
+    r"""Unified bone labels.
 
     Label values are built from four independent fields, so that adding a new
     sub-division, tissue, side or bone never forces existing values to move:
@@ -1769,9 +1769,3 @@ bonehub_to_snomed = {  # use https://github.com/ENHANCE-PET/MOOSE/blob/main/moos
         "name": "Entire bone of head",
     },
 }
-
-
-class LandmarkLabelMap(Enum):
-    """Unified landmark labels."""
-
-    pass
