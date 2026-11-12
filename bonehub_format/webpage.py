@@ -1,6 +1,6 @@
-"""The dataset's webpage, a static site for GitHub Pages, in <root>/github-webpage/.
+"""The database's webpage, a static site for GitHub Pages, in <database>/github-webpage/.
 
-build_webpage() copies the page from the package's template, fills in the dataset's name and links, and writes its
+build_webpage() copies the page from the package's template, fills in the database's name and links, and writes its
 data (data.js) from the index. github-webpage/README.md says how to publish the page, and
 github-webpage/update_data.py rewrites data.js after the index changes, without this package.
 
@@ -49,13 +49,13 @@ def build_webpage(
     logo_link: str | None = None,
     analytics_html: str | None = None,
 ) -> Path:
-    """Write <root>/github-webpage/ and return its path.
+    """Write <database>/github-webpage/ and return its path.
 
     title, subtitle: shown at the top of the page (plain text).
     about_html, note_html, contact_html: the About section, a note under the title and a Contact section (HTML);
         the note and the Contact section are left out when not given.
-    hf_repo_id: the dataset's Hugging Face repository, linked from the page, e.g. 'BoneHub/BoneHub-Dataset'.
-    github_repo: a GitHub repository linked from the page's GitHub icon, e.g. 'BoneHub/BoneHub-Dataset'.
+    hf_repo_id: the database's Hugging Face repository, linked from the page, e.g. 'BoneHub/<database>'.
+    github_repo: a GitHub repository linked from the page's GitHub icon, e.g. 'BoneHub/<database>'.
     logo_link: where the logo links to; the Hugging Face repository by default.
     analytics_html: HTML added at the end of the page, e.g. the script tag of a visitor counter.
 

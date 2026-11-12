@@ -117,14 +117,14 @@ def unpack_scan(scan_folder: Path, overwrite: bool = False) -> list[Path]:
 
 
 def _scan_folders(root: Path):
-    from .reader import Root
+    from .reader import Database
 
-    for scan in Root(root).scans():
+    for scan in Database(root).scans():
         yield scan.path
 
 
 def pack(root: Path) -> list[Path]:
-    """Bring every zip of a root up to date with its folder; return the zips written."""
+    """Bring every zip of a database up to date with its folder; return the zips written."""
     written = []
     for scan_folder in _scan_folders(root):
         written += pack_scan(scan_folder)
@@ -132,7 +132,7 @@ def pack(root: Path) -> list[Path]:
 
 
 def unpack(root: Path, overwrite: bool = False) -> list[Path]:
-    """Extract every zip of a root into its folder (see unpack_scan); return the folders written."""
+    """Extract every zip of a database into its folder (see unpack_scan); return the folders written."""
     written = []
     for scan_folder in _scan_folders(root):
         written += unpack_scan(scan_folder, overwrite)

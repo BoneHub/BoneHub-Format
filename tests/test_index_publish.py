@@ -5,19 +5,20 @@ import tempfile
 import unittest
 from pathlib import Path
 
-import numpy as np
 import pyarrow.parquet as pq
 
 import support
-from bonehub_format import Link, Root, load_links, save_links, scan_groups, validate
+from bonehub_format import DatasetInfo, layout, validate
 from bonehub_format.index import build_index
-from bonehub_format.matching import find_identical_images
 from bonehub_format.publish import excluded_from_upload, write_hub_files
+from bonehub_format.registry import parse_registry
 from bonehub_format.webpage import build_webpage
 
+REGISTRY_CSV = "BoneHub ID,Dataset Name,Country\n1,First,NL\n2,Second,US\n3,Third,DE\n"
 
-class TestRoot(unittest.TestCase):
-    """Three datasets: 1 and 2 share an image (2 holds it flipped, cropped and as int16), 3 is restricted."""
+
+class TestDatabase(unittest.TestCase):
+    """Three datasets: 2 is made from 1, 3 is restricted."""
 
     @classmethod
     def setUpClass(cls):
@@ -27,9 +28,11 @@ class TestRoot(unittest.TestCase):
         support.SyntheticConverter(source_1).export_to_bonehub_format(cls.root, 1, num_workers=1, verbose=False)
 
         source_2 = support.make_source(cls.tmp / "source_2", {"q1": ["ct"]}, first_seed=10)
-        volume = support.ct_volume(0)  # the image of p1 in dataset 1
-        support.write_image(volume[2:, :, ::-1], source_2 / "q1" / "ct" / "image.nii.gz", dtype=np.int16)
         support.SyntheticConverter(source_2).export_to_bonehub_format(cls.root, 2, num_workers=1, verbose=False)
+        dataset_json = cls.root / layout.dataset_dir_name(2) / layout.DATASET_JSON
+        info = DatasetInfo.load(dataset_json)
+        info.derived_from = [1]
+        info.save(dataset_json)
 
         source_3 = support.make_source(cls.tmp / "source_3", {"r1": ["ct"]}, first_seed=20)
         support.SyntheticConverter(source_3, license="restricted").export_to_bonehub_format(
@@ -40,43 +43,38 @@ class TestRoot(unittest.TestCase):
     def tearDownClass(cls):
         shutil.rmtree(cls.tmp, ignore_errors=True)
 
-    def test_1_matching_finds_the_shared_image_only(self):
-        found, errors = find_identical_images(self.root, workers=1, verbose=False)
-        self.assertEqual(errors, {})
-        self.assertEqual([link.scans for link in found], [("ds-001/sub-000001/scan-01", "ds-002/sub-000001/scan-01")])
-        self.assertGreaterEqual(found[0].score, 5)
-        self.assertEqual(load_links(self.root), found)
-        # a decision made by hand survives finding the link again
-        save_links(self.root, [found[0].model_copy(update={"decision": "rejected"})])
-        find_identical_images(self.root, workers=1, verbose=False)
-        self.assertEqual(load_links(self.root)[0].decision, "rejected")
-        save_links(self.root, found)
+    def test_1_registry(self):
+        registry = parse_registry(REGISTRY_CSV)
+        self.assertEqual(registry, {1: "First", 2: "Second", 3: "Third"})
+        self.assertEqual(validate(self.root, registry=registry), [])
+        problems = validate(self.root, registry={2: "Second", 3: "Third"})
+        self.assertEqual(len(problems), 2)  # ds-0001 itself, and derived_from of ds-0002
+        self.assertTrue(any("ds-0001: 1 is not a BoneHub ID" in p for p in problems))
+        self.assertTrue(any("derived_from names 1" in p for p in problems))
+        for bad in ("BoneHub ID,Name\n1,A\n", "BoneHub ID,Dataset Name\n1,A\n1,B\n", "BoneHub ID,Dataset Name\nx,A\n"):
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                parse_registry(bad)
 
-    def test_2_groups(self):
-        keys = ["ds-001/sub-000001/scan-01", "ds-001/sub-000002/scan-01", "ds-002/sub-000001/scan-01"]
-        links = [Link(scans=(keys[2], keys[0]), relation="same_image", evidence="test", decision="confirmed")]
-        image_group, subject_group = scan_groups(keys, links)
-        self.assertEqual(image_group[keys[2]], keys[0])
-        self.assertEqual(subject_group[keys[2]], "ds-001/sub-000001")
-        self.assertEqual(image_group[keys[1]], keys[1])
-        pending = [links[0].model_copy(update={"decision": "pending"})]
-        self.assertEqual(scan_groups(keys, pending)[0][keys[2]], keys[2])
+    def test_2_malformed_folder_names_are_reported(self):
+        old = self.root / "ds-001"
+        old.mkdir()
+        try:
+            self.assertTrue(any("ds-001: not a dataset folder" in p for p in validate(self.root)))
+        finally:
+            old.rmdir()
 
     def test_3_index(self):
-        find_identical_images(self.root, workers=1, verbose=False)
         paths = build_index(self.root)
         scans = pq.read_table(paths["scans"]).to_pylist()
         self.assertEqual(len(scans), 4)
         first = scans[0]
-        self.assertEqual(first["scan"], "ds-001/sub-000001/scan-01")
+        self.assertEqual(first["scan"], "ds-0001/sub-000001/scan-01")
         self.assertEqual(first["image_size"], [16, 16, 12])
         self.assertEqual(first["image_spacing"], [0.8, 0.8, 2.0])
         self.assertEqual(first["segmentation"], ["FEMUR_LEFT", "FEMUR_RIGHT"])
         self.assertEqual(first["truncated"], ["FEMUR_LEFT"])
         self.assertEqual(first["gender"], "F")
-        shared = [row for row in scans if row["image_group"] == "ds-001/sub-000001/scan-01"]
-        self.assertEqual(len(shared), 2)
-        self.assertEqual({row["subject_group"] for row in shared}, {"ds-001/sub-000001"})
+        self.assertNotIn("subject_group", first)
         restricted = [row for row in scans if row["restricted"]]
         self.assertEqual([row["dataset_id"] for row in restricted], [3])
         labels = pq.read_table(paths["labels"]).to_pylist()
@@ -85,17 +83,18 @@ class TestRoot(unittest.TestCase):
                          {("segmentation", "source", True), ("mesh", "derived:test-mesher@1.0", None)})
         datasets = pq.read_table(paths["datasets"]).to_pylist()
         self.assertEqual([(row["dataset_id"], row["subjects"], row["scans"]) for row in datasets], [(1, 2, 2), (2, 1, 1), (3, 1, 1)])
+        self.assertEqual([row["derived_from"] for row in datasets], [None, [1], None])
 
     def test_4_hub_files_and_webpage(self):
         build_index(self.root)
         write_hub_files(self.root, "Org/Test-Dataset", "Test Dataset", homepage="https://example.org")
-        self.assertEqual(validate(self.root, publishing=True), [])
+        self.assertEqual(validate(self.root, publishing=True, registry=parse_registry(REGISTRY_CSV)), [])
         card = (self.root / "README.md").read_text(encoding="utf-8")
         self.assertTrue(card.startswith("---\npretty_name: \"Test Dataset\"\nlicense: other\n"))
         self.assertIn("data_files: index/scans.parquet", card)
         self.assertIn("Dataset 3 (Synthetic) is under a restricted license", card)
         gitignore = (self.root / ".gitignore").read_text(encoding="utf-8")
-        for line in ("upload.md", "logs/", "**/mesh/", "/ds-003/"):
+        for line in ("upload.md", "logs/", "**/mesh/", "/ds-0003/"):
             self.assertIn(f"\n{line}\n", gitignore)
         self.assertIn("python -m bonehub_format upload", (self.root / "upload.md").read_text(encoding="utf-8"))
         self.assertIn("restricted", (self.root / "LICENSE.md").read_text(encoding="utf-8").lower())
@@ -103,10 +102,10 @@ class TestRoot(unittest.TestCase):
         patterns = [pattern for _, pattern in excluded_from_upload(self.root)]
         def uploaded(path):
             return not any(fnmatch.fnmatchcase(path, pattern) for pattern in patterns)
-        for path in ("upload.md", "logs/ds-001.log", "ds-001/sub-000001/scan-01/mesh/FEMUR_LEFT.stl", "ds-003/dataset.json",
-                     "ds-003/sub-000001/scan-01/image.nii.gz", ".cache/fingerprints/x.npz"):
+        for path in ("upload.md", "logs/ds-0001.log", "ds-0001/sub-000001/scan-01/mesh/FEMUR_LEFT.stl", "ds-0003/dataset.json",
+                     "ds-0003/sub-000001/scan-01/image.nii.gz"):
             self.assertFalse(uploaded(path), path)
-        for path in ("README.md", "ds-001/sub-000001/scan-01/mesh.zip", "ds-001/sub-000001/scan-01/image.nii.gz",
+        for path in ("README.md", "ds-0001/sub-000001/scan-01/mesh.zip", "ds-0001/sub-000001/scan-01/image.nii.gz",
                      "index/scans.parquet", "github-webpage/index.html", "ds-0031/dataset.json"):
             self.assertTrue(uploaded(path), path)
 

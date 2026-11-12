@@ -1,11 +1,13 @@
-"""Checking that a root folder follows the BoneHub format.
+"""Checking that a database follows the BoneHub format.
 
-    problems = validate(root)                    # the data itself
-    problems = validate(root, publishing=True)   # and that it is ready to upload: licenses, zips and index
+    problems = validate(root)                         # the data itself
+    problems = validate(root, registry=REGISTRY_URL)  # and that every dataset ID is a BoneHub ID of the registry
+    problems = validate(root, publishing=True)        # and that it is ready to upload: licenses, zips and index
 
 Each problem is a line of text naming the file or folder concerned; an empty list means none was found.
 """
 
+from collections.abc import Mapping
 from pathlib import Path
 
 from pydantic import ValidationError
@@ -13,8 +15,8 @@ from pydantic import ValidationError
 from . import layout
 from ._version import SCHEMA_VERSION, is_compatible_schema_version
 from .archive import model_folder_files, zip_is_current
-from .links import load_links
 from .metadata import DatasetInfo, ScanInfo, SubjectInfo
+from .registry import as_registry
 from .segmentation_file import read_segmentation_labels
 
 _INDEX_FILES = ("datasets.parquet", "scans.parquet", "labels.parquet")
@@ -90,24 +92,31 @@ def _check_scan(scan_folder: Path, sibling_names: set[str], problems: list[str],
             problems.append(f"{scan_folder}: has {kind} files for {sorted(found)}, but scan.json lists {sorted(expected)}.")
 
 
-def _check_dataset(dataset_folder: Path, dataset_ids: set[int], problems: list[str], publishing: bool) -> list[str]:
-    """Check one dataset folder and return the paths of its scans."""
-    info = _load(DatasetInfo, dataset_folder / layout.DATASET_JSON, problems)
+def _check_dataset(
+    dataset_folder: Path, registry: Mapping[int, str] | None, problems: list[str], publishing: bool
+) -> None:
+    """Check one dataset folder."""
+    dataset_id = layout.parse_dataset_dir(dataset_folder.name)
+    dataset_json = dataset_folder / layout.DATASET_JSON
+    if registry is not None and dataset_id not in registry:
+        problems.append(f"{dataset_folder}: {dataset_id} is not a BoneHub ID of the registry.")
+    info = _load(DatasetInfo, dataset_json, problems)
     if info is None:
-        return []
+        return
     if not is_compatible_schema_version(info.schema_version):
         problems.append(
-            f"{dataset_folder / layout.DATASET_JSON}: written in format version {info.schema_version}, which this "
-            f"package (format version {SCHEMA_VERSION}) cannot read."
+            f"{dataset_json}: written in format version {info.schema_version}, which this package (format version "
+            f"{SCHEMA_VERSION}) cannot read."
         )
-        return []
+        return
     if publishing and info.license is None:
-        problems.append(f"{dataset_folder / layout.DATASET_JSON}: has no license.")
+        problems.append(f"{dataset_json}: has no license.")
+    if dataset_id in (info.derived_from or []):
+        problems.append(f"{dataset_json}: derived_from names the dataset itself.")
     for parent in info.derived_from or []:
-        if parent not in dataset_ids:
-            problems.append(f"{dataset_folder / layout.DATASET_JSON}: derived_from names dataset {parent}, which is not in this root.")
+        if registry is not None and parent not in registry:
+            problems.append(f"{dataset_json}: derived_from names {parent}, which is not a BoneHub ID of the registry.")
 
-    scan_keys = []
     subject_folders = []
     for entry in sorted(dataset_folder.iterdir()):
         if entry.name == layout.DATASET_JSON:
@@ -116,8 +125,6 @@ def _check_dataset(dataset_folder: Path, dataset_ids: set[int], problems: list[s
             problems.append(f"{entry}: not a subject folder (sub-NNNNNN).")
             continue
         subject_folders.append(entry)
-    if len(subject_folders) > layout.MAX_SUBJECTS_PER_DATASET:
-        problems.append(f"{dataset_folder}: has {len(subject_folders)} subjects; at most {layout.MAX_SUBJECTS_PER_DATASET} fit in a dataset.")
 
     for subject_folder in subject_folders:
         if _load(SubjectInfo, subject_folder / layout.SUBJECT_JSON, problems) is None:
@@ -138,8 +145,6 @@ def _check_dataset(dataset_folder: Path, dataset_ids: set[int], problems: list[s
                 problems.append(f"{scan_folder}: has no {layout.SCAN_JSON}.")
                 continue
             _check_scan(scan_folder, names, problems, publishing)
-            scan_keys.append(f"{dataset_folder.name}/{subject_folder.name}/{scan_folder.name}")
-    return scan_keys
 
 
 def _check_index(root: Path, problems: list[str]) -> None:
@@ -149,7 +154,7 @@ def _check_index(root: Path, problems: list[str]) -> None:
         problems.append(f"{index}: has no {', '.join(missing)}; run build_index.")
         return
     built = min((index / name).stat().st_mtime for name in _INDEX_FILES)
-    sources = [root / layout.LINKS_FILE] if (root / layout.LINKS_FILE).is_file() else []
+    sources = []
     for dataset_folder in root.glob("ds-*"):
         sources += dataset_folder.glob("*.json")
         sources += dataset_folder.glob("*/*.json")
@@ -158,30 +163,26 @@ def _check_index(root: Path, problems: list[str]) -> None:
         problems.append(f"{index}: older than some metadata files; run build_index.")
 
 
-def validate(root: Path, publishing: bool = False) -> list[str]:
-    """The problems found in a root folder (see the module docstring)."""
+def validate(root: Path, publishing: bool = False, registry: Mapping[int, str] | str | Path | None = None) -> list[str]:
+    """The problems found in a database (see the module docstring).
+
+    registry: the BoneHub registry (see registry.py), as loaded by load_registry or as its URL or path. When given,
+    every dataset ID and every derived_from must be a BoneHub ID of it.
+    """
     root = Path(root)
     problems: list[str] = []
+    registry = None if registry is None else as_registry(registry)
+    for entry in sorted(root.glob("ds-*")):
+        if entry.is_dir() and layout.parse_dataset_dir(entry.name) is None:
+            problems.append(f"{entry}: not a dataset folder (ds-NNNN, named after the dataset's BoneHub ID).")
     dataset_folders = sorted(p for p in root.iterdir() if p.is_dir() and layout.parse_dataset_dir(p.name) is not None)
     if not dataset_folders:
-        return [f"{root}: has no dataset folders (ds-NNN)."]
-    dataset_ids = {layout.parse_dataset_dir(p.name) for p in dataset_folders}
-    scan_keys = set()
+        return problems + [f"{root}: has no dataset folders (ds-NNNN)."]
     for dataset_folder in dataset_folders:
         if not (dataset_folder / layout.DATASET_JSON).is_file():
             problems.append(f"{dataset_folder}: has no {layout.DATASET_JSON}.")
             continue
-        scan_keys.update(_check_dataset(dataset_folder, dataset_ids, problems, publishing))
-
-    try:
-        links = load_links(root)
-    except (ValidationError, ValueError, OSError) as e:
-        problems.append(f"{root / layout.LINKS_FILE}: {e}")
-        links = []
-    for link in links:
-        for key in link.scans:
-            if key not in scan_keys:
-                problems.append(f"{root / layout.LINKS_FILE}: links '{key}', which is not a scan of this root.")
+        _check_dataset(dataset_folder, registry, problems, publishing)
 
     if publishing:
         _check_index(root, problems)

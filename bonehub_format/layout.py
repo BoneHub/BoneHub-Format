@@ -1,12 +1,11 @@
-"""Where everything lives in a BoneHub-format root folder.
+"""Where everything lives in a BoneHub-format database.
 
-    <root>/
+    <database>/
     ├── README.md, LICENSE.md, .gitattributes, .gitignore, upload.md     publish.write_hub_files
-    ├── links.json                                                        links
     ├── index/                                                            index.build_index
     ├── github-webpage/                                                   webpage.build_webpage
     ├── logs/
-    └── ds-001/
+    └── ds-0001/                                                          named after its BoneHub ID (registry.py)
         ├── dataset.json
         └── sub-000001/
             ├── subject.json
@@ -37,20 +36,18 @@ MODEL_KINDS: dict[str, tuple[str, ...]] = {
 }
 
 INDEX_DIR = "index"
-LINKS_FILE = "links.json"
 LOGS_DIR = "logs"
-CACHE_DIR = ".cache"
 WEBPAGE_DIR = "github-webpage"
 
-#: Hugging Face allows at most 10,000 entries in a folder; larger sources are split into several datasets.
-MAX_SUBJECTS_PER_DATASET = 9999
+#: The largest IDs the folder names hold (ds-NNNN, sub-NNNNNN, scan-NN).
+MAX_DATASETS = 9999
+MAX_SUBJECTS_PER_DATASET = 999999
 MAX_SCANS_PER_SUBJECT = 99
-MAX_DATASETS = 999
 
-_DATASET_DIR = re.compile(r"ds-(\d{3})")
+_DATASET_DIR = re.compile(r"ds-(\d{4})")
 _SUBJECT_DIR = re.compile(r"sub-(\d{6})")
 _SCAN_DIR = re.compile(r"scan-(\d{2})")
-_SCAN_KEY = re.compile(r"ds-(\d{3})/sub-(\d{6})/scan-(\d{2})")
+_SCAN_KEY = re.compile(r"ds-(\d{4})/sub-(\d{6})/scan-(\d{2})")
 
 
 def _check_id(kind: str, value: int, maximum: int) -> int:
@@ -60,7 +57,7 @@ def _check_id(kind: str, value: int, maximum: int) -> int:
 
 
 def dataset_dir_name(dataset_id: int) -> str:
-    return f"ds-{_check_id('dataset', dataset_id, MAX_DATASETS):03d}"
+    return f"ds-{_check_id('dataset', dataset_id, MAX_DATASETS):04d}"
 
 
 def subject_dir_name(subject_id: int) -> str:
@@ -77,7 +74,7 @@ def _parse(pattern: re.Pattern, name: str) -> int | None:
 
 
 def parse_dataset_dir(name: str) -> int | None:
-    """The dataset ID of a folder name such as 'ds-001', or None if it is not one."""
+    """The dataset ID of a folder name such as 'ds-0027', or None if it is not one."""
     return _parse(_DATASET_DIR, name)
 
 
@@ -102,14 +99,14 @@ def scan_path(root: Path, dataset_id: int, subject_id: int, scan_id: int) -> Pat
 
 
 def scan_key(dataset_id: int, subject_id: int, scan_id: int) -> str:
-    """The path of a scan relative to the root, e.g. 'ds-001/sub-000001/scan-01', which names it everywhere."""
+    """The path of a scan relative to the database's root folder, e.g. 'ds-0027/sub-000001/scan-01', which names it everywhere."""
     return f"{dataset_dir_name(dataset_id)}/{subject_dir_name(subject_id)}/{scan_dir_name(scan_id)}"
 
 
 def parse_scan_key(key: str) -> tuple[int, int, int]:
     match = _SCAN_KEY.fullmatch(key)
     if not match:
-        raise ValueError(f"'{key}' is not a scan path such as 'ds-001/sub-000001/scan-01'.")
+        raise ValueError(f"'{key}' is not a scan path such as 'ds-0027/sub-000001/scan-01'.")
     return int(match.group(1)), int(match.group(2)), int(match.group(3))
 
 

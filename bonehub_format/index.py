@@ -1,11 +1,11 @@
-"""The index: Parquet tables that summarise a root, to search it without opening every file.
+"""The index: Parquet tables that summarise a database, to search it without opening every file.
 
     index/datasets.parquet   one row per dataset
     index/scans.parquet      one row per scan, with the fields of its subject
     index/labels.parquet     one row per scan, label and kind (segmentation, mesh, nurbs)
 
 The index is generated: build_index() rewrites it from the metadata files, the headers of the images and
-segmentations, and links.json. It also holds what the metadata files leave out because the data says it: image size
+segmentations. It also holds what the metadata files leave out because the data says it: image size
 and voxel spacing, and which segmented bones touch the image border (so are probably cut off by the field of view).
 
 Requires pyarrow: pip install "bonehub-format[converter]".
@@ -21,9 +21,8 @@ from pathlib import Path
 
 from . import layout
 from .licenses import is_restricted
-from .links import declared_links, load_links, scan_groups
 from .metadata import LABEL_KINDS
-from .reader import Root
+from .reader import Database
 from .segmentation_file import read_segmentation_segments
 
 INDEX_FILES = {"datasets": "datasets.parquet", "scans": "scans.parquet", "labels": "labels.parquet"}
@@ -76,11 +75,9 @@ def truncated_labels(segmentation_path: Path, image_size: list[int] | None) -> l
 
 def collect_index(root: Path) -> dict[str, list[dict]]:
     """The rows of the index tables."""
-    root = Root(root)
+    root = Database(root)
     datasets, scans, labels = [], [], []
     all_scans = list(root.scans())
-    links = load_links(root.path) + declared_links(root)
-    image_group, subject_group = scan_groups((scan.key for scan in all_scans), links)
 
     for dataset in root.datasets():
         info = dataset.info
@@ -125,8 +122,6 @@ def collect_index(root: Path) -> dict[str, list[dict]]:
                 "image_spacing": geometry[1] if geometry else None,
                 **{kind: info.labels(kind) for kind in LABEL_KINDS},
                 "truncated": truncated,
-                "image_group": image_group[scan.key],
-                "subject_group": subject_group[scan.key],
                 "subject_remarks": subject_info.remarks,
                 "remarks": info.remarks,
             }
@@ -165,7 +160,7 @@ def _schemas(pa) -> dict:
             + [("source_split", text), ("license", text), ("restricted", pa.bool_()), ("image", pa.bool_())]
             + [("image_size", pa.list_(pa.int32())), ("image_spacing", pa.list_(pa.float64()))]
             + [(kind, labels) for kind in LABEL_KINDS]
-            + [("truncated", labels), ("image_group", text), ("subject_group", text)]
+            + [("truncated", labels)]
             + [("subject_remarks", text), ("remarks", text)]
         ),
         "labels": pa.schema(
@@ -175,7 +170,7 @@ def _schemas(pa) -> dict:
 
 
 def build_index(root: Path) -> dict[str, Path]:
-    """Rewrite the index of a root; return the path of each table."""
+    """Rewrite the index of a database; return the path of each table."""
     pa, pq = _arrow()
     root = Path(root)
     rows = collect_index(root)

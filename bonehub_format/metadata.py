@@ -101,8 +101,10 @@ class DatasetInfo(_Metadata):
     )
     derived_from: list[int] | None = Field(
         None,
-        description="IDs of the BoneHub-format datasets this one is made from, e.g. a quality-checked copy; the "
-        "source_scan_id of each of its scans is then the path of the scan it was made from",
+        description="BoneHub IDs of the datasets this one is made from, wholly or in part, and so shares subjects "
+        "with, e.g. the dataset a newly segmented copy was made from. It is the only record of which datasets hold the "
+        "same people. Where a scan was made from a scan of a BoneHub-format dataset, its source_scan_id is that "
+        "scan's path, e.g. ds-0027/sub-000001/scan-01",
     )
     annotated_labels: list[str] | None = Field(
         None,

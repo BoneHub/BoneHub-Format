@@ -42,7 +42,6 @@ SCAN_COLUMNS = {
     "nurbs": "NURBS Available",
     "truncated": "Touching Image Border",
     "license": "License",
-    "subject_group": "Subject Group",
     "remarks": "Remarks",
 }
 

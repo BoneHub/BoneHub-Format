@@ -11,7 +11,8 @@ A converter subclasses DatasetConverter and sets the handlers of `custom_data_ha
 
 Subjects are numbered in the natural order of their source_subject_id (case_2 before case_10), and the scans of a
 subject by days_from_baseline (scans without one last) and then by source_scan_id. Converting the same source again
-therefore gives the same IDs, which is what lets links, derived datasets and publications refer to them.
+therefore gives the same IDs, which is what lets derived datasets and publications refer to them. The dataset ID is
+the dataset's BoneHub ID in the registry (see registry.py).
 
 Subjects are converted in worker processes, so the handlers must be module-level functions (or functools.partial
 of them), and scripts that run a conversion need an `if __name__ == "__main__":` guard.
@@ -228,8 +229,8 @@ class DatasetConverter:
         """
         Convert the source into <output_root>/ds-<output_dataset_id>.
         Args:
-            output_root (Path): The root folder of the BoneHub-format datasets.
-            output_dataset_id (int): The ID of the dataset to write.
+            output_root (Path): The root folder of the database to write the dataset into.
+            output_dataset_id (int): The dataset's BoneHub ID in the registry; the folder is ds-<ID, 4 digits>.
             overwrite (bool): Delete an existing dataset folder of this ID and convert everything again.
             resume (bool): Keep the subjects an earlier run of this conversion finished and convert the rest, e.g.
                 those that failed. The source must still list the same subjects.

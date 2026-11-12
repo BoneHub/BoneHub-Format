@@ -10,7 +10,7 @@ from bonehub_format import (
     RESTRICTED,
     SCHEMA_VERSION,
     DatasetInfo,
-    Root,
+    Database,
     ScanInfo,
     SubjectInfo,
     is_compatible_schema_version,
@@ -97,18 +97,23 @@ class TestSchemaVersion(unittest.TestCase):
             folder.mkdir()
             (folder / layout.DATASET_JSON).write_text(json.dumps({"name": "A", "schema_version": "0.3.0"}))
             with self.assertRaises(ValueError):
-                Root(tmp).dataset(1).info
+                Database(tmp).dataset(1).info
 
 
 class TestLayout(unittest.TestCase):
     def test_names(self):
-        self.assertEqual(layout.scan_key(1, 23, 4), "ds-001/sub-000023/scan-04")
-        self.assertEqual(layout.parse_scan_key("ds-001/sub-000023/scan-04"), (1, 23, 4))
+        self.assertEqual(layout.scan_key(1, 23, 4), "ds-0001/sub-000023/scan-04")
+        self.assertEqual(layout.parse_scan_key("ds-0001/sub-000023/scan-04"), (1, 23, 4))
         self.assertEqual(layout.parse_subject_dir("sub-000023"), 23)
         for bad in ("sub-23", "sub-000000", "scan-01"):
             self.assertIsNone(layout.parse_subject_dir(bad))
-        with self.assertRaises(ValueError):
-            layout.subject_dir_name(10_000)  # a folder on Hugging Face holds at most 10,000 entries
+        self.assertEqual(layout.dataset_dir_name(27), "ds-0027")
+        self.assertEqual(layout.parse_dataset_dir("ds-0027"), 27)
+        self.assertIsNone(layout.parse_dataset_dir("ds-027"))  # three digits
+        self.assertEqual(layout.subject_dir_name(10_000), "sub-010000")
+        for make, too_big in ((layout.dataset_dir_name, 10_000), (layout.subject_dir_name, 1_000_000)):
+            with self.assertRaises(ValueError):
+                make(too_big)
         self.assertEqual(layout.model_zip(Path("x"), "nurbs"), Path("x") / "nurbs.zip")
 
 

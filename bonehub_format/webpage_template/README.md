@@ -1,7 +1,7 @@
 # {{TITLE}}: webpage
 
-The webpage of {{TITLE}}: a static site for GitHub Pages that shows an overview of the dataset and searchable tables
-of its scans and source datasets. Dataset: {{HF_URL}}
+The webpage of {{TITLE}}: a static site for GitHub Pages that shows an overview of the database and searchable tables
+of its scans and source datasets. Database: {{HF_URL}}
 
 ## Publish it
 
@@ -22,7 +22,7 @@ of its scans and source datasets. Dataset: {{HF_URL}}
 
 ## Update it
 
-After the dataset changes and its index is rebuilt:
+After the database changes and its index is rebuilt:
 
 ```
 python update_data.py
@@ -36,5 +36,5 @@ git push
 ## Change it
 
 `index.html`, `styles.css`, `app.js` and `overview.js` come from the template of the BoneHub-Format package, and
-`bonehub_format.webpage.build_webpage` fills in the dataset's name and links. Running it again replaces them, so to
+`bonehub_format.webpage.build_webpage` fills in the database's name and links. Running it again replaces them, so to
 keep edits of your own, make them here and afterwards run only `update_data.py`.

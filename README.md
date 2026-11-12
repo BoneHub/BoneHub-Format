@@ -1,39 +1,45 @@
 # BoneHub-Format
 
-The BoneHub format is a folder structure for 3D bone datasets: medical images, bone segmentations, and the meshes
-and NURBS surfaces made from them, gathered from many source datasets under one label map. This package defines the
-format and provides the tools to build, check and publish datasets in it:
+The BoneHub format is a folder structure for harmonized databases of 3D bone data: medical images, bone
+segmentations, and the meshes and NURBS surfaces made from them, gathered from many source datasets under one label
+map. This package defines the format and provides the tools to build, check and publish databases in it:
 
 - **schema**: the metadata files, the label map and the segmentation file format;
 - **conversion**: a base class for converting a source dataset, and helpers for images, NIfTI and DICOM segmentations;
-- **checking**: a validator, an index of every scan and label, and a matcher that finds the same image in several datasets;
-- **publishing**: the files that make a folder a Hugging Face dataset repository, and a webpage for GitHub Pages.
+- **checking**: a validator, which also checks dataset IDs against the BoneHub registry, and an index of every scan
+  and label;
+- **changing**: helpers that add, replace and remove the labels of a converted scan;
+- **publishing**: the files that make a folder a HuggingFace dataset repository, and a webpage for GitHub Pages.
 
-The [BoneHub Dataset](https://bonehub.github.io/BoneHub-Dataset) is built with it.
+The databases built with it are published in the BoneHub [Harmonized Databases](https://huggingface.co/collections/BoneHub/harmonized-databases) collection on
+HuggingFace.
 
 ## Install
 
 ```bash
-pip install "bonehub-format @ git+https://github.com/BoneHub/BoneHub-Format.git"              # read and check datasets
+pip install "bonehub-format @ git+https://github.com/BoneHub/BoneHub-Format.git"              # read and check databases
 pip install "bonehub-format[converter] @ git+https://github.com/BoneHub/BoneHub-Format.git"   # also build and publish them
 pip install -e ".[converter]"                                                                 # from a local clone
 ```
 
-The base install needs only pydantic: it reads, validates and packs datasets. The `io` extra adds reading and writing
+The base install needs only pydantic: it reads, validates and packs databases. The `io` extra adds reading and writing
 segmentation masks (numpy, SimpleITK); the `converter` extra adds everything needed to convert sources and to build
-the index, links, Hugging Face files and webpage.
+the index, HuggingFace files and webpage.
 
 ## The format
 
+A **database** is a root folder of datasets harmonized under one label map, published as one HuggingFace dataset
+repository. Each database has its own scope (for example only whole-body scans, or several body regions together)
+and its own index and webpage. A **dataset** is one source dataset in a database.
+
 ```
-<root>/
-├── README.md, LICENSE.md, .gitattributes, .gitignore   the Hugging Face files (generated)
-├── upload.md                                           how to upload the root (generated, not uploaded)
-├── links.json                                          scans found to be the same image or person
+<database>/
+├── README.md, LICENSE.md, .gitattributes, .gitignore   the HuggingFace files (generated)
+├── upload.md                                           how to upload the database (generated, not uploaded)
 ├── index/                                              datasets / scans / labels .parquet (generated)
-├── github-webpage/                                     the dataset's webpage (generated)
+├── github-webpage/                                     the database's webpage (generated)
 ├── logs/                                               conversion logs (not uploaded)
-└── ds-001/                                             a dataset: one source dataset
+└── ds-0027/                                            a dataset, named after its BoneHub ID
     ├── dataset.json
     └── sub-000001/                                     a subject: one person
         ├── subject.json
@@ -47,9 +53,16 @@ the index, links, Hugging Face files and webpage.
             └── nurbs.zip
 ```
 
-A folder's name is its ID; no file name or metadata file repeats it. A scan is identified everywhere by its path,
-e.g. `ds-001/sub-000001/scan-01`. A dataset holds at most 9,999 subjects (Hugging Face allows 10,000 entries in a
-folder) and a subject at most 99 scans.
+A folder's name is its ID; no file name or metadata file repeats it. A scan is identified by its path, e.g.
+`ds-0027/sub-000001/scan-01`. A subject holds at most 99 scans.
+
+### Dataset IDs
+
+A dataset's ID is its **BoneHub ID** in the
+[BoneHub registry](https://github.com/BoneHub/Public-Datasets/blob/main/data/bonehub_public_datasets.csv), written
+with four digits: TotalSegmentator CT, BoneHub ID 27, is `ds-0027` in every database that holds it. The registry is
+the only source of dataset IDs: `validate`, `prepare` and `upload` check every dataset folder and every `derived_from`
+against it (`bonehub_format.load_registry` reads it).
 
 ### Metadata files
 
@@ -87,9 +100,10 @@ the source), `license`, `derived_from`, `annotated_labels`, `remarks`, `schema_v
 - **Licenses.** `license` is an SPDX identifier (`CC-BY-4.0`, `CC-BY-NC-SA-4.0`, ... see
   `bonehub_format.licenses.LICENSES`) or `restricted`, for data under a custom license with restricted access. A
   scan's `license` overrides its dataset's. Restricted data is converted like any other but is not published.
-- **Derived datasets.** A dataset made from another one, such as a quality-checked copy, gets its own ID and names its
-  parents in `derived_from`; the `source_scan_id` of each of its scans is the path of the scan it was made from.
-  Remarks about the quality check go in its dataset.json.
+- **Derived datasets.** `derived_from` lists the BoneHub IDs of the datasets a dataset was made from, wholly or in
+  part. It is the only record of which datasets hold the same people: BoneHub does not try to recognise the same
+  person or image across datasets. Where a scan was made from a scan of a BoneHub-format dataset, its `source_scan_id`
+  is that scan's path, e.g. `ds-0027/sub-000001/scan-01`.
 - **Registration.** `registered_to` names the scan of the same subject an image was registered to.
 
 ### Data files
@@ -106,66 +120,66 @@ the source), `license`, `derived_from`, `annotated_labels`, `remarks`, `schema_v
 - **IDs are reproducible.** Subjects are numbered in the natural order of their `source_subject_id` (`case_2` before
   `case_10`), and the scans of a subject by `days_from_baseline` and then `source_scan_id`. Converting the same source
   again gives the same IDs.
-- **A dataset does not change once converted.** Fixing a converter means converting the dataset again under the same
-  ID; curating it (e.g. a quality check) or converting a new release of its source gives a new dataset.
+- **Changing a dataset is your choice.** A change such as segmenting another bone, correcting a mask or adding meshes
+  can be made **in place**: the dataset keeps its ID, and the origin of each label in scan.json tells the new labels
+  from the source's (see [Changing a dataset](#changing-a-dataset)). Or it can be published as a **new dataset**: add
+  a row for it to the registry, convert or copy it under its new BoneHub ID, and name the original in `derived_from`.
+  Fixing a converter means converting the dataset again under the same ID; this replaces the dataset folder, so
+  changes made in place since then must be made again.
 - **Versions.** `schema_version` in dataset.json is the version of this format (major.minor). A minor version adds
   something datasets of older minor versions still satisfy, such as a new optional field or a new kind of per-label
   data, which gets a new file or zip in the scan folder and a new label-to-origin block in scan.json. A major version
   makes older datasets invalid. A package reads datasets of its own major version and an equal or lower minor version.
 
-### Matching scans across datasets
-
-Source datasets reuse each other's images (CTPelvic1K, for one, includes KiTS19 and CT Colonography images), so the
-same image or person can appear in several datasets. `links.json` records such matches:
-
-```json
-{"links": [{"scans": ["ds-002/sub-000012/scan-01", "ds-007/sub-000300/scan-01"],
-            "relation": "same_image", "evidence": "identical_slices", "score": 87,
-            "decision": "confirmed", "note": null}]}
-```
-
-`same_image` means the same acquisition, possibly re-saved, reoriented or cropped; `same_subject` means the same
-person. Only confirmed links count; a rejected link is kept so that it is not proposed again. The links of a derived
-dataset to its parent are declared by its metadata. The index joins linked scans into `image_group` and
-`subject_group`: drop duplicates by `image_group`, and split training and test data by `subject_group`.
-
-`python -m bonehub_format match ROOT` finds the scans that are the same image. It fingerprints every slice of every
-image, along each array axis, by the histogram of its values after subtracting the slice's minimum; a histogram does
-not change with rotation, flipping, transposition or a constant intensity offset, so a match does not depend on the
-file format, pixel type or header orientation. Slices with little information (air, padding) are skipped. Two scans
-are the same image when at least 5 slices match in an order a crop, flip or shift explains; real image noise makes
-chance matches of whole slices practically impossible, so these links are confirmed without review. Resampled or
-intensity-clipped copies have no identical slices and are not found.
-
 ### The index
 
-`index/` holds three Parquet tables, rebuilt from everything above by `python -m bonehub_format index ROOT`:
+`index/` holds three Parquet tables, rebuilt from everything above by `python -m bonehub_format index DATABASE`:
 
 - `datasets.parquet`: one row per dataset, with its metadata and its number of subjects and scans;
 - `scans.parquet`: one row per scan, with the fields of its subject, its effective license, the image size and
-  spacing, its labels per kind, the segmented labels that touch the image border (`truncated`), and its
-  `image_group` and `subject_group`;
+  spacing, its labels per kind, and the segmented labels that touch the image border (`truncated`);
 - `labels.parquet`: one row per scan, label and kind, with the origin.
 
 ```python
 import pandas as pd
 
-scans = pd.read_parquet("Z:/BoneHub/BoneHub_Dataset/index/scans.parquet")
+scans = pd.read_parquet("path/to/database/index/scans.parquet")
 femurs = scans[scans["segmentation"].apply(lambda labels: "FEMUR_LEFT" in labels)]
 ```
 
-## Reading a dataset
+## Reading a database
 
 ```python
-from bonehub_format import Root
+from bonehub_format import Database
 
-root = Root("Z:/BoneHub/BoneHub_Dataset")
-for scan in root.scans():
+database = Database("path/to/database")
+for scan in database.scans():
     print(scan.key, scan.info.modality, scan.subject.info.gender, scan.license)
     print(scan.image_path, scan.segmentation_path, scan.info.labels("segmentation"))
     for label, files in scan.model_files("mesh").items():  # from mesh/, or from mesh.zip
         stl_bytes = files[0].read_bytes()
 ```
+
+## Changing a dataset
+
+To change a dataset in place, `update_segmentation` and `update_model_files` add, replace and remove the labels of a
+scan and keep its scan.json in step with the files:
+
+```python
+from bonehub_format import Database, update_model_files, update_segmentation
+
+scan = Database("path/to/database").dataset(27).subject(1).scan(1)
+
+# Add or replace the labels a model segmented. The mask holds BoneLabelMap values on the grid of the scan's image;
+# where it overlaps another label, overlap="replace" (the default) or "keep" decides which keeps the voxel.
+update_segmentation(scan, "patella_mask.nii.gz", origin="model:MyModel@1.0")
+update_segmentation(scan, remove=["PATELLA_LEFT"])
+
+update_model_files(scan, "mesh", {"PATELLA_LEFT": Path("patella.stl")}, origin="derived:my-mesher@1.0")
+```
+
+Neither changes dataset.json: when a label is now segmented in every scan, add it to `annotated_labels`. Rebuild the
+index afterwards. `update_segmentation` needs the `io` extra.
 
 ## Converting a dataset
 
@@ -211,38 +225,39 @@ class MyDataset(DatasetConverter):
 
 
 if __name__ == "__main__":  # subjects are converted in worker processes, which re-import this script
-    MyDataset(Path("path/to/source")).export_to_bonehub_format(Path("path/to/root"), output_dataset_id=1)
+    MyDataset(Path("path/to/source")).export_to_bonehub_format(Path("path/to/database"), output_dataset_id=27)
 ```
 
 A subject's folder is written completely or not at all, and `subject.json` is written last. `overwrite=True`
 converts a dataset again from scratch; `resume=True` keeps the subjects an earlier run finished and converts the rest,
-after checking that the source still lists the same subjects. Logs go to `<root>/logs/`.
+after checking that the source still lists the same subjects. Logs go to `<database>/logs/`.
 
-The converters of the BoneHub Dataset are in the private `custom_dataset_io` submodule.
+The converters of the BoneHub source datasets are in the private `custom_dataset_io` submodule.
 
 ## Publishing
 
 ```bash
-python -m bonehub_format prepare ROOT --repo-id BoneHub/BoneHub-Dataset --title "BoneHub Dataset" --homepage https://bonehub.github.io/BoneHub-Dataset
-python -m bonehub_format upload ROOT --repo-id BoneHub/BoneHub-Dataset
+python -m bonehub_format prepare DATABASE --repo-id BoneHub/<database> --title "<title>" --homepage https://bonehub.github.io/<database>
+python -m bonehub_format upload DATABASE --repo-id BoneHub/<database>
 ```
 
-`prepare` brings the zips up to date, rebuilds the index, validates the root, and writes:
+`prepare` brings the zips up to date, rebuilds the index, validates the database, and writes:
 
-- `README.md`, the dataset card, which the Hugging Face dataset viewer shows with the index tables;
+- `README.md`, the dataset card, which the HuggingFace dataset viewer shows with the index tables;
 - `LICENSE.md`, the license of every dataset and of the scans with their own;
 - `.gitattributes` and `.gitignore`;
 - `upload.md`, the steps to upload (it is not uploaded itself);
-- `github-webpage/`, the dataset's webpage, with the steps to publish it on GitHub Pages in its README. Pass
+- `github-webpage/`, the database's webpage, with the steps to publish it on GitHub Pages in its README. Pass
   `--webpage-options options.json` to set its subtitle, About and Contact sections, and analytics snippet (see
   `bonehub_format.webpage.build_webpage`).
 
-`upload` sends the root to Hugging Face without `upload.md`, the logs and caches, the per-label `mesh/` and `nurbs/`
+`upload` sends the database to HuggingFace without `upload.md`, the logs, the per-label `mesh/` and `nurbs/`
 folders (their zips are uploaded) and restricted data. Use it rather than `hf upload`, which does not read
-`.gitignore`.
+`.gitignore`. Once the repository is public, add it to the [Harmonized Databases](https://huggingface.co/collections/BoneHub/harmonized-databases) collection.
 
-Other commands: `validate ROOT [--publishing]`, `pack ROOT`, `unpack ROOT` (extract the zips of a downloaded copy into
-folders), `index ROOT`, `match ROOT`.
+Other commands: `validate DATABASE [--publishing]`, `pack DATABASE`, `unpack DATABASE` (extract the zips of a
+downloaded copy into folders), `index DATABASE`. `validate`, `prepare` and `upload` read the registry from GitHub;
+pass `--registry path/to/registry.csv` to use a local copy, or `validate --registry none` to skip the ID check.
 
 ## Segmentation files
 

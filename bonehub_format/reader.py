@@ -1,7 +1,7 @@
-"""Reading a BoneHub-format root folder: its datasets, their subjects and the subjects' scans.
+"""Reading a BoneHub-format database: its datasets, their subjects and the subjects' scans.
 
-    root = Root("Z:/BoneHub/BoneHub_Dataset")
-    for scan in root.scans():
+    database = Database("path/to/database")
+    for scan in database.scans():
         print(scan.key, scan.info.modality, scan.info.labels("segmentation"), scan.image_path)
         for label, files in scan.model_files("mesh").items():
             mesh_bytes = files[0].read_bytes()
@@ -32,8 +32,8 @@ def _ids(folder: Path, parse, json_name: str) -> list[int]:
     return sorted(ids)
 
 
-class Root:
-    """A folder of BoneHub-format datasets (ds-001, ds-002, ...)."""
+class Database:
+    """A database: a root folder of BoneHub-format datasets (ds-0001, ds-0027, ...), harmonized under one label map."""
 
     def __init__(self, path: Path):
         self.path = Path(path)
@@ -54,17 +54,17 @@ class Root:
             yield from dataset.scans()
 
     def __repr__(self) -> str:
-        return f"Root('{self.path}')"
+        return f"Database('{self.path}')"
 
 
 class Dataset:
-    """A dataset folder (ds-NNN). Its info is checked against the format version this package reads, unless
+    """A dataset folder (ds-NNNN, named after its BoneHub ID). Its info is checked against the format version this package reads, unless
     check_version is False."""
 
-    def __init__(self, root: Root | Path, dataset_id: int, check_version: bool = True):
-        self.root = root if isinstance(root, Root) else Root(root)
+    def __init__(self, database: Database | Path, dataset_id: int, check_version: bool = True):
+        self.database = database if isinstance(database, Database) else Database(database)
         self.id = dataset_id
-        self.path = layout.dataset_path(self.root.path, dataset_id)
+        self.path = layout.dataset_path(self.database.path, dataset_id)
         self.check_version = check_version
         if not (self.path / layout.DATASET_JSON).is_file():
             raise FileNotFoundError(f"'{self.path}' has no {layout.DATASET_JSON}.")
@@ -142,7 +142,7 @@ class Scan:
 
     @property
     def key(self) -> str:
-        """The scan's path relative to the root, e.g. 'ds-001/sub-000001/scan-01'."""
+        """The scan's path relative to the database's root folder, e.g. 'ds-0027/sub-000001/scan-01'."""
         return layout.scan_key(self.dataset.id, self.subject.id, self.id)
 
     @cached_property

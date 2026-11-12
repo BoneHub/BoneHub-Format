@@ -1,13 +1,13 @@
-"""Find scans by their labels, with the index of a BoneHub-format root.
+"""Find scans by their labels, with the index of a BoneHub-format database.
 
-Build the index first: python -m bonehub_format index Z:/BoneHub/BoneHub_Dataset
+Build the index first: python -m bonehub_format index Z:/BoneHub/Databases/MyDatabase
 """
 
 from pathlib import Path
 
 import pandas as pd
 
-ROOT = Path("Z:/BoneHub/BoneHub_Dataset")
+ROOT = Path("Z:/BoneHub/Databases/MyDatabase")
 
 if __name__ == "__main__":
     scans = pd.read_parquet(ROOT / "index" / "scans.parquet")
@@ -20,7 +20,12 @@ if __name__ == "__main__":
         return bool(lumbar and tibia)
 
     selected = scans[scans.apply(wanted, axis=1)]
-    # Some source datasets reuse each other's images: keep one scan per person.
-    selected = selected.drop_duplicates("subject_group")
+    # Keep one scan per person. Datasets made from one another (derived_from in index/datasets.parquet) hold the same
+    # people, so leave out the scans of a dataset whose parent is selected too.
+    datasets = pd.read_parquet(ROOT / "index" / "datasets.parquet")
+    parents = {row.dataset_id: set(row.derived_from if row.derived_from is not None else []) for row in datasets.itertuples()}
+    chosen = set(selected["dataset_id"])
+    selected = selected[[not (parents[dataset_id] & chosen) for dataset_id in selected["dataset_id"]]]
+    selected = selected.drop_duplicates(["dataset_id", "subject_id"])
     print(f"Found {len(selected)} people with a complete L4 or L5 vertebra and tibia segmented.")
     print(selected[["scan", "modality", "age", "gender", "license"]].to_string(index=False))

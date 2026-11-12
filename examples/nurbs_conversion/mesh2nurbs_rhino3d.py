@@ -10,12 +10,12 @@ in it):
     conda activate mesh2nurbs-rhino3d
 
 Usage:
-    python mesh2nurbs_rhino3d.py 5                      # convert all meshes of dataset 5 (VSD)
-    python mesh2nurbs_rhino3d.py 5 7 9                  # several datasets
-    python mesh2nurbs_rhino3d.py 5 --subjects 1 2       # only some subjects
-    python mesh2nurbs_rhino3d.py 5 --overwrite          # regenerate existing NURBS surfaces
-    python mesh2nurbs_rhino3d.py 5 --dry-run            # print the commands without running them
-    python mesh2nurbs_rhino3d.py 5 --root "Z:/BoneHub/BoneHub_Dataset" --rhino-path "C:/Program Files/Rhino 8/System/Rhino.exe"
+    python mesh2nurbs_rhino3d.py 36                     # convert all meshes of dataset 36 (VSD Bone Reconstruction)
+    python mesh2nurbs_rhino3d.py 36 27 44               # several datasets
+    python mesh2nurbs_rhino3d.py 36 --subjects 1 2      # only some subjects
+    python mesh2nurbs_rhino3d.py 36 --overwrite         # regenerate existing NURBS surfaces
+    python mesh2nurbs_rhino3d.py 36 --dry-run           # print the commands without running them
+    python mesh2nurbs_rhino3d.py 36 --root "Z:/BoneHub/Databases/MyDatabase" --rhino-path "C:/Program Files/Rhino 8/System/Rhino.exe"
 
 Run `python mesh2nurbs_rhino3d.py --help` for all options.
 """
@@ -28,10 +28,10 @@ import sys
 import tempfile
 from pathlib import Path
 
-from bonehub_format import BoneLabelMap, Root, layout, pack_scan, validate
+from bonehub_format import BoneLabelMap, Database, layout, pack_scan, validate
 from bonehub_format.labelmap import structure_of
 
-DEFAULT_ROOT = Path("Z:/BoneHub/BoneHub_Dataset")
+DEFAULT_ROOT = Path("Z:/BoneHub/Databases/MyDatabase")
 
 CLI_COMMAND = "mesh2nurbs-rhino3d"
 DEFAULT_PREPROCESSING_STEPS = ["remove-isolated-islands"]
@@ -86,7 +86,7 @@ def build_command(input_path: Path, label: str, preprocessing_steps: list, rhino
 
 def convert_dataset(root: Path, dataset_id: int, args: argparse.Namespace) -> list:
     """Convert the meshes of one dataset and return the meshes that failed."""
-    dataset = Root(root).dataset(dataset_id)
+    dataset = Database(root).dataset(dataset_id)
     print(f"\n=== Dataset {dataset_id}: {dataset.path} ===", flush=True)
     origin = f"derived:{CLI_COMMAND}@{tool_version()}"
 
@@ -154,7 +154,7 @@ def main() -> int:
         "--root",
         type=Path,
         default=DEFAULT_ROOT,
-        help=f"Root folder of the BoneHub-format datasets (default: {DEFAULT_ROOT})",
+        help=f"Root folder of the database (default: {DEFAULT_ROOT})",
     )
     parser.add_argument("--subjects", nargs="+", type=int, help="Subject IDs to convert (default: all)")
     parser.add_argument("--overwrite", action="store_true", help="Regenerate NURBS surfaces that already exist")

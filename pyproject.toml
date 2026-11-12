@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "bonehub-format"
 version = "1.0.0"
-description = "The BoneHub data format for 3D bone datasets, and the tools to convert, check and publish datasets in it."
+description = "The BoneHub data format for harmonized databases of 3D bone datasets, and the tools to convert, check and publish them."
 readme = "README.md"
 requires-python = ">=3.10"
 authors = [
@@ -24,7 +24,7 @@ io = [
     "numpy",
     "SimpleITK",
 ]
-# Converting source datasets, and building the index, links, Hugging Face files and webpage of a root.
+# Converting source datasets, and building the index, Hugging Face files and webpage of a database.
 converter = [
     "numpy",
     "SimpleITK",

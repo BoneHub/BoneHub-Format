@@ -1,11 +1,11 @@
-"""The files that make a root folder a Hugging Face dataset repository.
+"""The files that make a database a Hugging Face dataset repository.
 
     README.md        the dataset card: what the data is, how it is laid out and how to download parts of it
     LICENSE.md       the license of each dataset, and of the scans that have their own
     .gitattributes   which files Hugging Face stores as large files
-    .gitignore       what stays out of the upload: upload.md, logs, caches, the per-label mesh/ and nurbs/ folders
+    .gitignore       what stays out of the upload: upload.md, logs, the per-label mesh/ and nurbs/ folders
                      (their zips are uploaded) and restricted data
-    upload.md        how to upload the root; it is not uploaded itself
+    upload.md        how to upload the database; it is not uploaded itself
 
 write_hub_files() writes them all from the metadata, after build_index() has written the index the card points to.
 """
@@ -20,7 +20,8 @@ from . import layout
 from .index import INDEX_FILES
 from .licenses import RESTRICTED, is_restricted, license_name, license_url
 from .metadata import LABEL_KINDS
-from .reader import Root
+from .reader import Database
+from .registry import REGISTRY_PAGE_URL
 
 FORMAT_URL = "https://github.com/BoneHub/BoneHub-Format"
 LABEL_MAP_URL = f"{FORMAT_URL}/blob/main/bonehub_format/labelmap.py"
@@ -60,7 +61,7 @@ def _license_link(value: str | None) -> str:
     return f"[{value}]({url})" if url else license_name(value)
 
 
-def _restricted_folders(root: Root) -> list[str]:
+def _restricted_folders(root: Database) -> list[str]:
     """The folders of restricted data: whole datasets, or single scans whose own license is restricted."""
     folders = []
     for dataset in root.datasets():
@@ -74,14 +75,13 @@ def _restricted_folders(root: Root) -> list[str]:
 def excluded_from_upload(root: Path) -> list[tuple[str, str]]:
     """What stays out of the upload, as (.gitignore pattern, upload pattern) pairs.
 
-    Upload patterns are matched with fnmatch against paths relative to the root, as huggingface_hub matches its
+    Upload patterns are matched with fnmatch against paths relative to the database's root folder, as huggingface_hub matches its
     ignore_patterns: '*' also matches across folders.
     """
-    reader = root if isinstance(root, Root) else Root(root)
+    reader = root if isinstance(root, Database) else Database(root)
     excluded = [
         ("upload.md", "upload.md"),
         (f"{layout.LOGS_DIR}/", f"{layout.LOGS_DIR}/*"),
-        (f"{layout.CACHE_DIR}/", f"{layout.CACHE_DIR}/*"),
         (".bonehub_qc/", ".bonehub_qc/*"),
         ("__pycache__/", "*__pycache__/*"),
         ("*.tmp", "*.tmp"),
@@ -91,7 +91,7 @@ def excluded_from_upload(root: Path) -> list[tuple[str, str]]:
     return excluded
 
 
-def _gitignore(root: Root) -> str:
+def _gitignore(root: Database) -> str:
     lines = [
         "# What stays out of the Hugging Face upload. Written by bonehub_format.publish, from the licenses in the",
         "# metadata; write it again with write_hub_files rather than editing it. upload() passes the same exclusions",
@@ -107,7 +107,7 @@ def _gitignore(root: Root) -> str:
 
 
 def upload(root: Path, repo_id: str, commit_message: str | None = None) -> None:
-    """Upload a root to its Hugging Face dataset repository, leaving out what excluded_from_upload lists.
+    """Upload a database to its Hugging Face dataset repository, leaving out what excluded_from_upload lists.
 
     The repository must exist (hf repos create <repo_id> --repo-type dataset --private) and you must be logged in
     (hf auth login). Running it again resumes an interrupted upload. Requires huggingface_hub.
@@ -127,7 +127,7 @@ def upload(root: Path, repo_id: str, commit_message: str | None = None) -> None:
 
 
 class _Summary:
-    def __init__(self, root: Root):
+    def __init__(self, root: Database):
         self.datasets = root.datasets()
         self.scans = list(root.scans())
         self.by_dataset = Counter(scan.dataset.id for scan in self.scans)
@@ -138,7 +138,7 @@ class _Summary:
         self.restricted = [d for d in self.datasets if is_restricted(d.info.license)]
 
 
-def _card(root: Root, summary: _Summary, repo_id: str, title: str, description: str | None, homepage: str | None) -> str:
+def _card(root: Database, summary: _Summary, repo_id: str, title: str, description: str | None, homepage: str | None) -> str:
     tags = ["medical", "bone", "3d", "bonehub-format"]
     tags += sorted({_MODALITY_TAGS.get(m, m.lower()) for m in summary.modalities if m != "unknown"})
     tags += [kind for kind in layout.MODEL_KINDS if summary.kind_counts[kind]]
@@ -204,7 +204,7 @@ def _card(root: Root, summary: _Summary, repo_id: str, title: str, description: 
         "## Layout",
         "",
         "```",
-        "ds-001/                          a source dataset",
+        "ds-0027/                         a source dataset, named after its BoneHub ID",
         "├── dataset.json                 source, license, which labels its segmentations cover",
         "└── sub-000001/                  a subject (person)",
         "    ├── subject.json             source ID, gender",
@@ -215,7 +215,6 @@ def _card(root: Root, summary: _Summary, repo_id: str, title: str, description: 
         "        ├── mesh.zip             <LABEL>.stl",
         "        └── nurbs.zip            <LABEL>.iges / <LABEL>.step",
         "index/                           Parquet tables of all datasets, scans and labels",
-        "links.json                       scans found to be the same image or the same person",
         "```",
         "",
         "A folder's name is its ID. The index (also shown in the dataset viewer above) holds every field of the "
@@ -237,11 +236,11 @@ def _card(root: Root, summary: _Summary, repo_id: str, title: str, description: 
         ")",
         "```",
         "",
-        "or with the command line, e.g. every image and segmentation of dataset 1:",
+        "or with the command line, e.g. every image and segmentation of dataset 27:",
         "",
         "```",
-        f'hf download {repo_id} --repo-type dataset --local-dir data --include "ds-001/*/image.nii.gz" '
-        '--include "ds-001/*/segmentation.seg.nrrd" --include "ds-001/*.json"',
+        f'hf download {repo_id} --repo-type dataset --local-dir data --include "ds-0027/*/image.nii.gz" '
+        '--include "ds-0027/*/segmentation.seg.nrrd" --include "ds-0027/*.json"',
         "```",
         "",
         "## Conventions",
@@ -254,8 +253,11 @@ def _card(root: Root, summary: _Summary, repo_id: str, title: str, description: 
         "- **Coordinates**: meshes and NURBS surfaces are in the physical space of the image, in LPS and millimetres.",
         "- **Coverage**: `annotated_labels` in `dataset.json` lists the labels a dataset's segmentations cover. In a scan "
         "with a segmentation, a covered label that is missing is absent from the image; other labels were not segmented.",
-        "- **Duplicates**: some source datasets reuse each other's images. `image_group` and `subject_group` in the index "
-        "join scans that are the same image or the same person; split training and test data by `subject_group`.",
+        f"- **IDs**: a dataset's ID is its BoneHub ID in the [BoneHub registry]({REGISTRY_PAGE_URL}), the same in every "
+        "BoneHub database.",
+        "- **Shared subjects**: `derived_from` in `dataset.json` (and in `index/datasets.parquet`) names the datasets a "
+        "dataset was made from, wholly or in part, which hold the same people; keep them on the same side of a "
+        "train/test split.",
         "",
         "## Licenses",
         "",
@@ -265,9 +267,9 @@ def _card(root: Root, summary: _Summary, repo_id: str, title: str, description: 
         "## Reading the data with Python",
         "",
         "```python",
-        "from bonehub_format import Root",
+        "from bonehub_format import Database",
         "",
-        'for scan in Root("data").scans():',
+        'for scan in Database("data").scans():',
         '    print(scan.key, scan.info.modality, scan.info.labels("segmentation"), scan.image_path)',
         "```",
         "",
@@ -325,13 +327,13 @@ def _upload_guide(root: Path, summary: _Summary, repo_id: str, title: str) -> st
 
 This file is listed in `.gitignore`, so it is not uploaded.
 
-## 1. Prepare the root
+## 1. Prepare the database
 
 ```
 python -m bonehub_format prepare "{root}" --repo-id {repo_id} --title "{title}"
 ```
 
-This brings the zips of the `mesh/` and `nurbs/` folders up to date, rebuilds the index, checks the root, and writes
+This brings the zips of the `mesh/` and `nurbs/` folders up to date, rebuilds the index, checks the database, and writes
 the card, `LICENSE.md`, `.gitattributes`, `.gitignore`, this file and `github-webpage/`. Fix any problem it reports
 before uploading.
 
@@ -349,7 +351,8 @@ hf repos create {repo_id} --repo-type dataset --private
 ```
 
 Make it public in its settings once you have checked it. To let people in only after they accept terms, turn on
-access requests there (gating applies to the whole repository).
+access requests there (gating applies to the whole repository). Then add it to the BoneHub
+[Harmonized Databases](https://huggingface.co/collections/BoneHub/harmonized-databases-6af58ac969228185e158c202) collection.
 
 ## 4. Upload
 
@@ -357,7 +360,7 @@ access requests there (gating applies to the whole repository).
 python -m bonehub_format upload "{root}" --repo-id {repo_id} --commit-message "Upload {title}"
 ```
 
-This leaves out what `.gitignore` lists: this file, the logs and caches, the per-label `mesh/` and `nurbs/` folders
+This leaves out what `.gitignore` lists: this file, the logs, the per-label `mesh/` and `nurbs/` folders
 (their zips are uploaded) and restricted data. Do not upload with `hf upload` alone: it does not read `.gitignore`,
 so it would upload all of it, restricted data included. Running the command again resumes an interrupted upload and
 skips files that are already there.
@@ -380,18 +383,18 @@ See `github-webpage/README.md`.
 def write_hub_files(
     root: Path, repo_id: str, title: str, description: str | None = None, homepage: str | None = None
 ) -> list[Path]:
-    """Write the dataset card, LICENSE.md, .gitattributes, .gitignore and upload.md of a root; return their paths.
+    """Write the dataset card, LICENSE.md, .gitattributes, .gitignore and upload.md of a database; return their paths.
 
-    repo_id: the Hugging Face repository, e.g. 'BoneHub/BoneHub-Dataset'.
-    title: the name of the dataset, e.g. 'BoneHub Dataset'.
+    repo_id: the Hugging Face repository, e.g. 'BoneHub/<database>'.
+    title: the name of the database.
     description: the opening paragraph of the card (Markdown); a generic one by default.
-    homepage: the dataset's webpage, linked from the card.
+    homepage: the database's webpage, linked from the card.
     """
     root_path = Path(root)
     missing = [name for name in INDEX_FILES.values() if not (root_path / layout.INDEX_DIR / name).is_file()]
     if missing:
         raise FileNotFoundError(f"The card shows the index, which is missing ({', '.join(missing)}); run build_index first.")
-    reader = Root(root_path)
+    reader = Database(root_path)
     summary = _Summary(reader)
     files = {
         "README.md": _card(reader, summary, repo_id, title, description, homepage),

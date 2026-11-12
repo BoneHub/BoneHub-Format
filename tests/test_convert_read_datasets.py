@@ -10,7 +10,7 @@ os.environ["MAX_SUBJECTS_FOR_TESTING"] = "2"  # Set a limit for testing purposes
 import unittest
 from pathlib import Path
 
-from bonehub_format import Root, validate
+from bonehub_format import Database, validate
 
 try:
     import bonehub_format.custom_dataset_io as custom_dataset_io
@@ -21,7 +21,7 @@ except ImportError:
 if not hasattr(custom_dataset_io, "__all__"):
     raise unittest.SkipTest("custom_dataset_io submodule is not available.")
 
-PUBLIC_DATASETS = Path("Z:/BoneHub/Public_Datasets")
+PUBLIC_DATASETS = Path("/mnt/nas/BoneHub/Public_Datasets")
 if not PUBLIC_DATASETS.is_dir():
     raise unittest.SkipTest(f"The source datasets are not available in {PUBLIC_DATASETS}.")
 
@@ -38,7 +38,7 @@ class _ConvertAndRead:
         converter = getattr(custom_dataset_io, self.converter)(PUBLIC_DATASETS / self.source)
         converter.export_to_bonehub_format(OUTPUT_ROOT, self.dataset_id, overwrite=True, verbose=False)
 
-        dataset = Root(OUTPUT_ROOT).dataset(self.dataset_id)
+        dataset = Database(OUTPUT_ROOT).dataset(self.dataset_id)
         self.assertEqual(len(dataset), self.subjects)
         self.assertEqual([s.id for s in dataset.subjects()], list(range(1, self.subjects + 1)))
         for scan in dataset.scans():
