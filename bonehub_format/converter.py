@@ -23,9 +23,11 @@ from __future__ import annotations
 import logging
 import logging.handlers
 import multiprocessing
+import multiprocessing.connection
 import os
 import re
 import shutil
+import threading
 from collections.abc import Callable
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from concurrent.futures.process import BrokenProcessPool
@@ -169,8 +171,23 @@ def _origin(spec: Origin, label: str, kind: str) -> str:
     return spec[label]
 
 
+def _exit_when_parent_dies() -> None:
+    """Hard-exit this worker once the parent process is gone.
+
+    Stopping a conversion (e.g. a test run in an IDE) can kill the parent without shutting the pool down; the orphaned
+    workers would otherwise finish their queued subjects, write into a folder the next run is converting, and then
+    hang on the log queue nobody reads.
+    """
+    parent = multiprocessing.parent_process()
+    if parent is None:
+        return
+    multiprocessing.connection.wait([parent.sentinel])
+    os._exit(1)
+
+
 def _init_subject_worker(log_queue, logger_name: str) -> None:
-    """Forward the worker's log records and warnings to the parent and keep ITK single-threaded."""
+    """Forward the worker's log records and warnings to the parent, keep ITK single-threaded, and exit with the parent."""
+    threading.Thread(target=_exit_when_parent_dies, name="parent-watchdog", daemon=True).start()
     for name in (logger_name, "py.warnings"):
         logger = logging.getLogger(name)
         logger.handlers = [logging.handlers.QueueHandler(log_queue)]
