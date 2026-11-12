@@ -111,6 +111,12 @@ DATASET_JOBS: tuple[DatasetJob, ...] = (
         dataset_class=custom_dataset_io.VSDFullBody,
         source_root=Path("Z:/BoneHub/Public_Datasets/071 VSDFullBody"),
     ),
+    DatasetJob(
+        name="visible_human_3d_models",
+        dataset_id=12,
+        dataset_class=custom_dataset_io.VisibleHuman3DModels,
+        source_root=Path("Z:/BoneHub/Educational_Atlas/visible-human-3d-models"),
+    ),
 )
 
 
@@ -151,7 +157,8 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Subjects converted at once within each dataset, each in its own process "
         "(default: one per CPU core, at most 8, or 4 for vsd_full_body). Up to max-workers x subject-workers "
-        "processes run together, each needing up to ~2 GB for the largest masks (~5 GB for vsd_full_body); "
+        "processes run together, each needing up to ~2 GB for the largest masks (~5 GB for vsd_full_body, ~6 GB for "
+        "visible_human_3d_models); "
         "lower it if memory runs out.",
     )
     parser.add_argument(

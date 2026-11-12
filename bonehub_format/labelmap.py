@@ -105,6 +105,7 @@ class BoneLabelMap(Enum):
 
     ## 1xxx - head
     SKULL = 100000000  # cranium + facial bones; EXCLUDES the auditory ossicles and the hyoid
+    SKULL_WITHOUT_MANDIBLE = 100100000  # cranium + facial bones except the mandible
     CRANIUM = 110000000  # braincase only, no facial bones
     FRONTAL_BONE = 110100000
     # PARIETAL_BONE
@@ -175,6 +176,7 @@ class BoneLabelMap(Enum):
     ## 2xxx - spine
     VERTEBRAL_COLUMN = 200000000  # C1 .. L6 + sacrum + coccyx
     PRESACRAL_SPINE = 200100000  # C1 .. L6; EXCLUDES sacrum and coccyx
+    SACRUM_COCCYX = 200200000  # sacrum + coccyx
     CERVICAL_SPINE = 210000000  # C1 .. C7
     # VERTEBRA_C1
     VERTEBRA_C1 = 210100000  # atlas: it has no vertebral body, so no BODY / ARCH parts
