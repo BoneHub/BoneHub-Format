@@ -15,7 +15,7 @@ Usage:
     python mesh2nurbs_rhino3d.py 36 --subjects 1 2      # only some subjects
     python mesh2nurbs_rhino3d.py 36 --overwrite         # regenerate existing NURBS surfaces
     python mesh2nurbs_rhino3d.py 36 --dry-run           # print the commands without running them
-    python mesh2nurbs_rhino3d.py 36 --root "Z:/BoneHub/Databases/MyDatabase" --rhino-path "C:/Program Files/Rhino 8/System/Rhino.exe"
+    python mesh2nurbs_rhino3d.py 36 --root "/mnt/nas/BoneHub/Harmonized_Databases/MyDatabase" --rhino-path "C:/Program Files/Rhino 8/System/Rhino.exe"
 
 Run `python mesh2nurbs_rhino3d.py --help` for all options.
 """
@@ -31,7 +31,7 @@ from pathlib import Path
 from bonehub_format import BoneLabelMap, Database, layout, pack_scan, validate
 from bonehub_format.labelmap import structure_of
 
-DEFAULT_ROOT = Path("Z:/BoneHub/Databases/MyDatabase")
+DEFAULT_ROOT = Path("/mnt/nas/BoneHub/Harmonized_Databases/MyDatabase")
 
 CLI_COMMAND = "mesh2nurbs-rhino3d"
 DEFAULT_PREPROCESSING_STEPS = ["remove-isolated-islands"]

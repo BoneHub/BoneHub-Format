@@ -2,8 +2,8 @@ from pathlib import Path
 
 from bonehub_format.custom_dataset_io import SynthRAD2023
 
-database_root = Path("Z:/BoneHub/Databases/MyDatabase")
-data_root = Path("Z:/BoneHub/Public_Datasets/006 SynthRAD2023")
+database_root = Path("/mnt/nas/BoneHub/Harmonized_Databases/MyDatabase")
+data_root = Path("/mnt/nas/BoneHub/Public_Datasets/0006 SynthRAD2023")
 
 # The guard is required: subjects are converted in worker processes that re-import this script.
 if __name__ == "__main__":

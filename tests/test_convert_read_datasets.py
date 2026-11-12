@@ -49,53 +49,53 @@ class _ConvertAndRead:
 
 
 class TestBoneDat(_ConvertAndRead, unittest.TestCase):
-    converter, source, dataset_id = "BoneDat", "124 BoneDat/BoneDat", 1
+    converter, source, dataset_id = "BoneDat", "0124 BoneDat/BoneDat", 1
 
 
 class TestKiTS2023(_ConvertAndRead, unittest.TestCase):
-    converter, source, dataset_id = "KiTS2023", "073 kits23", 2
+    converter, source, dataset_id = "KiTS2023", "0073 kits23", 2
 
 
 class TestSpineMetsCTSeg(_ConvertAndRead, unittest.TestCase):
-    converter, source, dataset_id = "SpineMetsCTSeg", "019 TCIA Spine-Mets-CT-SEG", 3
+    converter, source, dataset_id = "SpineMetsCTSeg", "0019 TCIA Spine-Mets-CT-SEG", 3
 
 
 class TestEnhancePET(_ConvertAndRead, unittest.TestCase):
-    converter, source, dataset_id = "EnhancePET", "134 enhance-pet-1_6k", 4
+    converter, source, dataset_id = "EnhancePET", "0134 enhance-pet-1_6k", 4
 
 
 class TestVSDReconstruction(_ConvertAndRead, unittest.TestCase):
     converter, dataset_id = "VSDReconstruction", 5
-    source = "036 VSDFullBodyBoneReconstruction/Hamid_processed/vsd-lower-extremities-seg"
+    source = "0036 VSDFullBodyBoneReconstruction/Hamid_processed/vsd-lower-extremities-seg"
 
 
 class TestTotalSegmentatorCT(_ConvertAndRead, unittest.TestCase):
-    converter, source, dataset_id = "TotalSegmentatorCT", "027 Totalsegmentator/raw_data", 6
+    converter, source, dataset_id = "TotalSegmentatorCT", "0027 Totalsegmentator/v3.0.0", 6
 
 
 class TestCTPelvic1K(_ConvertAndRead, unittest.TestCase):
-    converter, source, dataset_id = "CTPelvic1K", "044 CTPelvic1K", 7
+    converter, source, dataset_id = "CTPelvic1K", "0044 CTPelvic1K", 7
 
 
 class TestPENGWIN(_ConvertAndRead, unittest.TestCase):
-    converter, source, dataset_id = "PENGWIN", "106 PENGWIN", 8
+    converter, source, dataset_id = "PENGWIN", "0106 PENGWIN", 8
 
 
 class TestCTPEL(_ConvertAndRead, unittest.TestCase):
-    converter, source, dataset_id = "CTPEL", "138 ctpel", 9
+    converter, source, dataset_id = "CTPEL", "0138 ctpel", 9
 
 
 class TestSynthRAD2023(_ConvertAndRead, unittest.TestCase):
-    converter, source, dataset_id = "SynthRAD2023", "006 SynthRAD2023", 10
+    converter, source, dataset_id = "SynthRAD2023", "0006 SynthRAD2023", 10
     subjects = 6  # 2 each of Task1 train (CT + MR), Task1 validation (MR) and Task2 (CT)
 
 
 class TestVSDFullBody(_ConvertAndRead, unittest.TestCase):
-    converter, source, dataset_id = "VSDFullBody", "071 VSDFullBody", 11
+    converter, source, dataset_id = "VSDFullBody", "0071 VSDFullBody", 11
 
 
 class TestACRIN6664(_ConvertAndRead, unittest.TestCase):
-    converter, source, dataset_id = "ACRIN6664", "070 TCIA CT COLONOGRAPHY ACRIN 6664", 12
+    converter, source, dataset_id = "ACRIN6664", "0070 TCIA CT COLONOGRAPHY ACRIN 6664", 12
 
 
 if __name__ == "__main__":

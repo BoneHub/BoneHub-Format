@@ -1,13 +1,13 @@
 """Find scans by their labels, with the index of a BoneHub-format database.
 
-Build the index first: python -m bonehub_format index Z:/BoneHub/Databases/MyDatabase
+Build the index first: python -m bonehub_format index /mnt/nas/BoneHub/Harmonized_Databases/MyDatabase
 """
 
 from pathlib import Path
 
 import pandas as pd
 
-ROOT = Path("Z:/BoneHub/Databases/MyDatabase")
+ROOT = Path("/mnt/nas/BoneHub/Harmonized_Databases/MyDatabase")
 
 if __name__ == "__main__":
     scans = pd.read_parquet(ROOT / "index" / "scans.parquet")

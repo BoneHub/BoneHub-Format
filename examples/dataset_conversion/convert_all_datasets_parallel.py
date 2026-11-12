@@ -8,15 +8,15 @@ summary of which datasets succeeded and which failed.
 
 Convert everything again (sized for 32 GB of RAM):
 
-    python examples/dataset_conversion/convert_all_datasets_parallel.py --output-root Z:/BoneHub/Databases/MyDatabase --overwrite --max-workers 3 --subject-workers 4
+    python examples/dataset_conversion/convert_all_datasets_parallel.py --output-root /mnt/nas/BoneHub/Harmonized_Databases/MyDatabase --overwrite --max-workers 3 --subject-workers 4
 
 Convert only the subjects that failed (or were not reached) in an earlier run:
 
-    python examples/dataset_conversion/convert_all_datasets_parallel.py --output-root Z:/BoneHub/Databases/MyDatabase --resume --datasets vsd_reconstruction
+    python examples/dataset_conversion/convert_all_datasets_parallel.py --output-root /mnt/nas/BoneHub/Harmonized_Databases/MyDatabase --resume --datasets vsd_reconstruction
 
 Afterwards, get the database ready to upload (see the README):
 
-    python -m bonehub_format prepare Z:/BoneHub/Databases/MyDatabase --repo-id BoneHub/MyDatabase --title "My Database"
+    python -m bonehub_format prepare /mnt/nas/BoneHub/Harmonized_Databases/MyDatabase --repo-id BoneHub/MyDatabase --title "My Database"
 """
 
 from __future__ import annotations
@@ -47,75 +47,75 @@ DATASET_JOBS: tuple[DatasetJob, ...] = (
         name="bonedat",
         dataset_id=124,
         dataset_class=custom_dataset_io.BoneDat,
-        source_root=Path("Z:/BoneHub/Public_Datasets/124 BoneDat/BoneDat"),
+        source_root=Path("/mnt/nas/BoneHub/Public_Datasets/0124 BoneDat/BoneDat"),
     ),
     DatasetJob(
         name="kits2023",
         dataset_id=73,
         dataset_class=custom_dataset_io.KiTS2023,
-        source_root=Path("Z:/BoneHub/Public_Datasets/073 kits23"),
+        source_root=Path("/mnt/nas/BoneHub/Public_Datasets/0073 kits23"),
     ),
     DatasetJob(
         name="spine_mets_ct_seg",
         dataset_id=19,
         dataset_class=custom_dataset_io.SpineMetsCTSeg,
-        source_root=Path("Z:/BoneHub/Public_Datasets/019 TCIA Spine-Mets-CT-SEG"),
+        source_root=Path("/mnt/nas/BoneHub/Public_Datasets/0019 TCIA Spine-Mets-CT-SEG"),
     ),
     DatasetJob(
         name="enhance_pet",
         dataset_id=134,
         dataset_class=custom_dataset_io.EnhancePET,
-        source_root=Path("Z:/BoneHub/Public_Datasets/134 enhance-pet-1_6k"),
+        source_root=Path("/mnt/nas/BoneHub/Public_Datasets/0134 enhance-pet-1_6k"),
     ),
     DatasetJob(
         name="vsd_reconstruction",
         dataset_id=36,
         dataset_class=custom_dataset_io.VSDReconstruction,
         source_root=Path(
-            "Z:/BoneHub/Public_Datasets/036 VSDFullBodyBoneReconstruction/Hamid_processed/vsd-lower-extremities-seg"
+            "/mnt/nas/BoneHub/Public_Datasets/0036 VSDFullBodyBoneReconstruction/Hamid_processed/vsd-lower-extremities-seg"
         ),
     ),
     DatasetJob(
         name="totalsegmentator_ct",
         dataset_id=27,
         dataset_class=custom_dataset_io.TotalSegmentatorCT,
-        source_root=Path("Z:/BoneHub/Public_Datasets/027 Totalsegmentator/raw_data"),
+        source_root=Path("/mnt/nas/BoneHub/Public_Datasets/0027 Totalsegmentator/v3.0.0"),
     ),
     DatasetJob(
         name="ctpelvic1k",
         dataset_id=44,
         dataset_class=custom_dataset_io.CTPelvic1K,
-        source_root=Path("Z:/BoneHub/Public_Datasets/044 CTPelvic1K"),
+        source_root=Path("/mnt/nas/BoneHub/Public_Datasets/0044 CTPelvic1K"),
     ),
     DatasetJob(
         name="pengwin",
         dataset_id=106,
         dataset_class=custom_dataset_io.PENGWIN,
-        source_root=Path("Z:/BoneHub/Public_Datasets/106 PENGWIN"),
+        source_root=Path("/mnt/nas/BoneHub/Public_Datasets/0106 PENGWIN"),
     ),
     DatasetJob(
         name="ctpel",
         dataset_id=138,
         dataset_class=custom_dataset_io.CTPEL,
-        source_root=Path("Z:/BoneHub/Public_Datasets/138 ctpel"),
+        source_root=Path("/mnt/nas/BoneHub/Public_Datasets/0138 ctpel"),
     ),
     DatasetJob(
         name="synthrad2023",
         dataset_id=6,
         dataset_class=custom_dataset_io.SynthRAD2023,
-        source_root=Path("Z:/BoneHub/Public_Datasets/006 SynthRAD2023"),
+        source_root=Path("/mnt/nas/BoneHub/Public_Datasets/0006 SynthRAD2023"),
     ),
     DatasetJob(
         name="vsd_full_body",
         dataset_id=71,
         dataset_class=custom_dataset_io.VSDFullBody,
-        source_root=Path("Z:/BoneHub/Public_Datasets/071 VSDFullBody"),
+        source_root=Path("/mnt/nas/BoneHub/Public_Datasets/0071 VSDFullBody"),
     ),
     DatasetJob(
         name="visible_human_3d_models",
         dataset_id=153,
         dataset_class=custom_dataset_io.VisibleHuman3DModels,
-        source_root=Path("Z:/BoneHub/Educational_Atlas/visible-human-3d-models"),
+        source_root=Path("/mnt/nas/BoneHub/Public_Datasets/0153 visible-human-3d-models"),
     ),
 )
 
