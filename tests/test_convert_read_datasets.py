@@ -64,9 +64,8 @@ class TestEnhancePET(_ConvertAndRead, unittest.TestCase):
     converter, source, dataset_id = "EnhancePET", "0134 enhance-pet-1_6k", 4
 
 
-class TestVSDReconstruction(_ConvertAndRead, unittest.TestCase):
-    converter, dataset_id = "VSDReconstruction", 5
-    source = "0036 VSDFullBodyBoneReconstruction/Hamid_processed/vsd-lower-extremities-seg"
+class TestVSDLowerExtremitiesSeg(_ConvertAndRead, unittest.TestCase):
+    converter, source, dataset_id = "VSDLowerExtremitiesSeg", "0180 vsd-lower-extremities-seg", 5
 
 
 class TestTotalSegmentatorCT(_ConvertAndRead, unittest.TestCase):

@@ -12,7 +12,7 @@ Convert everything again (sized for 32 GB of RAM):
 
 Convert only the subjects that failed (or were not reached) in an earlier run:
 
-    python examples/dataset_conversion/convert_all_datasets_parallel.py --output-root /mnt/nas/BoneHub/Harmonized_Databases/MyDatabase --resume --datasets vsd_reconstruction
+    python examples/dataset_conversion/convert_all_datasets_parallel.py --output-root /mnt/nas/BoneHub/Harmonized_Databases/MyDatabase --resume --datasets vsd_lower_extremities_seg
 
 Afterwards, get the database ready to upload (see the README):
 
@@ -68,12 +68,10 @@ DATASET_JOBS: tuple[DatasetJob, ...] = (
         source_root=Path("/mnt/nas/BoneHub/Public_Datasets/0134 enhance-pet-1_6k"),
     ),
     DatasetJob(
-        name="vsd_reconstruction",
-        dataset_id=36,
-        dataset_class=custom_dataset_io.VSDReconstruction,
-        source_root=Path(
-            "/mnt/nas/BoneHub/Public_Datasets/0036 VSDFullBodyBoneReconstruction/Hamid_processed/vsd-lower-extremities-seg"
-        ),
+        name="vsd_lower_extremities_seg",
+        dataset_id=180,
+        dataset_class=custom_dataset_io.VSDLowerExtremitiesSeg,
+        source_root=Path("/mnt/nas/BoneHub/Public_Datasets/0180 vsd-lower-extremities-seg"),
     ),
     DatasetJob(
         name="totalsegmentator_ct",

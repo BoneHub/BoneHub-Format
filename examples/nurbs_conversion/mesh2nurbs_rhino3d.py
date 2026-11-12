@@ -10,12 +10,12 @@ in it):
     conda activate mesh2nurbs-rhino3d
 
 Usage:
-    python mesh2nurbs_rhino3d.py 36                     # convert all meshes of dataset 36 (VSD Bone Reconstruction)
-    python mesh2nurbs_rhino3d.py 36 27 44               # several datasets
-    python mesh2nurbs_rhino3d.py 36 --subjects 1 2      # only some subjects
-    python mesh2nurbs_rhino3d.py 36 --overwrite         # regenerate existing NURBS surfaces
-    python mesh2nurbs_rhino3d.py 36 --dry-run           # print the commands without running them
-    python mesh2nurbs_rhino3d.py 36 --root "/mnt/nas/BoneHub/Harmonized_Databases/MyDatabase" --rhino-path "C:/Program Files/Rhino 8/System/Rhino.exe"
+    python mesh2nurbs_rhino3d.py 180                    # convert all meshes of dataset 180 (vsd-lower-extremities-seg)
+    python mesh2nurbs_rhino3d.py 180 27 44              # several datasets
+    python mesh2nurbs_rhino3d.py 180 --subjects 1 2     # only some subjects
+    python mesh2nurbs_rhino3d.py 180 --overwrite        # regenerate existing NURBS surfaces
+    python mesh2nurbs_rhino3d.py 180 --dry-run          # print the commands without running them
+    python mesh2nurbs_rhino3d.py 180 --root "/mnt/nas/BoneHub/Harmonized_Databases/MyDatabase" --rhino-path "C:/Program Files/Rhino 8/System/Rhino.exe"
 
 Run `python mesh2nurbs_rhino3d.py --help` for all options.
 """
