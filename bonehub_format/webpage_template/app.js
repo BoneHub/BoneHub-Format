@@ -679,7 +679,7 @@ function getCachedRowSearchText(state, row) {
 }
 
 function isLinkColumn(column) {
-    return ['Access Link', 'Related Paper', 'URL', 'Paper'].includes(column);
+    return ['Access Link', 'Related Paper', 'URL', 'Paper', 'Registry'].includes(column);
 }
 
 function parseNumericComparison(filterValue) {

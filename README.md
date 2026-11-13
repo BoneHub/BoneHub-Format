@@ -59,10 +59,11 @@ A folder's name is its ID; no file name or metadata file repeats it. A scan is i
 ### Dataset IDs
 
 A dataset's ID is its **BoneHub ID** in the
-[BoneHub registry](https://github.com/BoneHub/Public-Datasets/blob/main/data/bonehub_public_datasets.csv), written
-with four digits: TotalSegmentator CT, BoneHub ID 27, is `ds-0027` in every database that holds it. The registry is
-the only source of dataset IDs: `validate`, `prepare` and `upload` check every dataset folder and every `derived_from`
-against it (`bonehub_format.load_registry` reads it).
+[BoneHub registry](https://github.com/BoneHub/Public-Datasets/blob/main/data/bonehub_public_datasets.json) (browse it
+in the [Dataset Browser](https://bonehub.github.io/Public-Datasets/)), written with four digits: TotalSegmentator CT,
+BoneHub ID 27, is `ds-0027` in every database that holds it. The registry is the only source of dataset IDs:
+`validate`, `prepare` and `upload` check every dataset folder and every `derived_from` against it
+(`bonehub_format.load_registry` reads it).
 
 ### Metadata files
 
@@ -123,7 +124,7 @@ the source), `license`, `derived_from`, `annotated_labels`, `remarks`, `schema_v
 - **Changing a dataset is your choice.** A change such as segmenting another bone, correcting a mask or adding meshes
   can be made **in place**: the dataset keeps its ID, and the origin of each label in scan.json tells the new labels
   from the source's (see [Changing a dataset](#changing-a-dataset)). Or it can be published as a **new dataset**: add
-  a row for it to the registry, convert or copy it under its new BoneHub ID, and name the original in `derived_from`.
+  an entry for it to the registry, convert or copy it under its new BoneHub ID, and name the original in `derived_from`.
   Fixing a converter means converting the dataset again under the same ID; this replaces the dataset folder, so
   changes made in place since then must be made again.
 - **Versions.** `schema_version` in dataset.json is the version of this format (major.minor). A minor version adds
@@ -257,7 +258,7 @@ folders (their zips are uploaded) and restricted data. Use it rather than `hf up
 
 Other commands: `validate DATABASE [--publishing]`, `pack DATABASE`, `unpack DATABASE` (extract the zips of a
 downloaded copy into folders), `index DATABASE`. `validate`, `prepare` and `upload` read the registry from GitHub;
-pass `--registry path/to/registry.csv` to use a local copy, or `validate --registry none` to skip the ID check.
+pass `--registry path/to/registry.json` to use a local copy, or `validate --registry none` to skip the ID check.
 
 ## Segmentation files
 

@@ -16,6 +16,7 @@ from importlib import resources
 from pathlib import Path
 
 from . import layout
+from .registry import REGISTRY_PAGE_URL
 
 TEMPLATE_FOLDER = "webpage_template"  # in the package
 TEMPLATE_FILES = ("index.html", "app.js", "overview.js", "styles.css", "logo.png", ".nojekyll", "update_data.py", "README.md")
@@ -94,8 +95,9 @@ def build_webpage(
         "{{CONTACT}}": contact,
         "{{ANALYTICS}}": analytics_html or "",
         "{{HF_URL}}": hf_url or "(not published yet)",
+        "{{REGISTRY_PAGE_URL}}": REGISTRY_PAGE_URL,
     }
-    for name in ("index.html", "README.md"):
+    for name in ("index.html", "README.md", "update_data.py"):
         text = (target / name).read_text(encoding="utf-8")
         for placeholder, value in values.items():
             text = text.replace(placeholder, value)

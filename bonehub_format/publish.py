@@ -21,7 +21,7 @@ from .index import INDEX_FILES
 from .licenses import RESTRICTED, is_restricted, license_name, license_url
 from .metadata import LABEL_KINDS
 from .reader import Database
-from .registry import REGISTRY_PAGE_URL
+from .registry import REGISTRY_PAGE_URL, registry_entry_url
 
 FORMAT_URL = "https://github.com/BoneHub/BoneHub-Format"
 LABEL_MAP_URL = f"{FORMAT_URL}/blob/main/bonehub_format/labelmap.py"
@@ -173,7 +173,8 @@ def _card(root: Database, summary: _Summary, repo_id: str, title: str, descripti
         info = dataset.info
         source = " ".join(f"[{name}]({url})" for name, url in (("data", info.url), ("paper", info.paper)) if url)
         rows.append(
-            f"| {dataset.id} | {info.name} | {summary.subjects_by_dataset[dataset.id]} | {summary.by_dataset[dataset.id]} "
+            f"| [{dataset.id}]({registry_entry_url(dataset.id)}) | {info.name} | {summary.subjects_by_dataset[dataset.id]} "
+            f"| {summary.by_dataset[dataset.id]} "
             f"| {_license_link(info.license)} | {source} |"
         )
 
@@ -254,7 +255,7 @@ def _card(root: Database, summary: _Summary, repo_id: str, title: str, descripti
         "- **Coverage**: `annotated_labels` in `dataset.json` lists the labels a dataset's segmentations cover. In a scan "
         "with a segmentation, a covered label that is missing is absent from the image; other labels were not segmented.",
         f"- **IDs**: a dataset's ID is its BoneHub ID in the [BoneHub registry]({REGISTRY_PAGE_URL}), the same in every "
-        "BoneHub database.",
+        "BoneHub database; each ID in the table above links to its registry entry.",
         "- **Shared subjects**: `derived_from` in `dataset.json` (and in `index/datasets.parquet`) names the datasets a "
         "dataset was made from, wholly or in part, which hold the same people; keep them on the same side of a "
         "train/test split.",

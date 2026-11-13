@@ -14,6 +14,8 @@ from pathlib import Path
 import pyarrow.parquet as pq
 
 HERE = Path(__file__).resolve().parent
+# The BoneHub registry's Dataset Browser, filled in by build_webpage; each dataset links to its entry there.
+REGISTRY_PAGE_URL = "{{REGISTRY_PAGE_URL}}"
 
 # Index column -> column of the table on the page
 DATASET_COLUMNS = {
@@ -60,6 +62,8 @@ def write_data_js(index_dir: Path, output_path: Path) -> tuple[int, int]:
     """Write data.js from the index; return the number of datasets and scans."""
     index_dir = Path(index_dir)
     datasets = _rows(index_dir / "datasets.parquet", DATASET_COLUMNS)
+    for dataset in datasets:
+        dataset["Registry"] = f"{REGISTRY_PAGE_URL}#dataset={dataset['Dataset ID']}"
     scans = _rows(index_dir / "scans.parquet", SCAN_COLUMNS)
     content = (
         "// Generated from the dataset's index by update_data.py; do not edit.\n"

@@ -14,7 +14,10 @@ from bonehub_format.publish import excluded_from_upload, write_hub_files
 from bonehub_format.registry import parse_registry
 from bonehub_format.webpage import build_webpage
 
-REGISTRY_CSV = "BoneHub ID,Dataset Name,Country\n1,First,NL\n2,Second,US\n3,Third,DE\n"
+REGISTRY_JSON = json.dumps(
+    [{"BoneHub ID": i, "Dataset Name": name, "Country": [country]} for i, name, country in
+     ((1, "First", "NL"), (2, "Second", "US"), (3, "Third", "DE"))]
+)
 
 
 class TestDatabase(unittest.TestCase):
@@ -44,14 +47,22 @@ class TestDatabase(unittest.TestCase):
         shutil.rmtree(cls.tmp, ignore_errors=True)
 
     def test_1_registry(self):
-        registry = parse_registry(REGISTRY_CSV)
+        registry = parse_registry(REGISTRY_JSON)
         self.assertEqual(registry, {1: "First", 2: "Second", 3: "Third"})
         self.assertEqual(validate(self.root, registry=registry), [])
         problems = validate(self.root, registry={2: "Second", 3: "Third"})
         self.assertEqual(len(problems), 2)  # ds-0001 itself, and derived_from of ds-0002
         self.assertTrue(any("ds-0001: 1 is not a BoneHub ID" in p for p in problems))
         self.assertTrue(any("derived_from names 1" in p for p in problems))
-        for bad in ("BoneHub ID,Name\n1,A\n", "BoneHub ID,Dataset Name\n1,A\n1,B\n", "BoneHub ID,Dataset Name\nx,A\n"):
+        bad_registries = (
+            "not json",
+            '{"BoneHub ID": 1, "Dataset Name": "A"}',  # not an array
+            '[{"BoneHub ID": 1, "Name": "A"}]',  # no Dataset Name
+            '[{"BoneHub ID": 1, "Dataset Name": "A"}, {"BoneHub ID": 1, "Dataset Name": "B"}]',
+            '[{"BoneHub ID": "1", "Dataset Name": "A"}]',
+            '[{"BoneHub ID": 0, "Dataset Name": "A"}]',
+        )
+        for bad in bad_registries:
             with self.subTest(bad=bad), self.assertRaises(ValueError):
                 parse_registry(bad)
 
@@ -88,11 +99,12 @@ class TestDatabase(unittest.TestCase):
     def test_4_hub_files_and_webpage(self):
         build_index(self.root)
         write_hub_files(self.root, "Org/Test-Dataset", "Test Dataset", homepage="https://example.org")
-        self.assertEqual(validate(self.root, publishing=True, registry=parse_registry(REGISTRY_CSV)), [])
+        self.assertEqual(validate(self.root, publishing=True, registry=parse_registry(REGISTRY_JSON)), [])
         card = (self.root / "README.md").read_text(encoding="utf-8")
         self.assertTrue(card.startswith("---\npretty_name: \"Test Dataset\"\nlicense: other\n"))
         self.assertIn("data_files: index/scans.parquet", card)
         self.assertIn("Dataset 3 (Synthetic) is under a restricted license", card)
+        self.assertIn("| [1](https://bonehub.github.io/Public-Datasets/#dataset=1) | Synthetic |", card)
         gitignore = (self.root / ".gitignore").read_text(encoding="utf-8")
         for line in ("upload.md", "logs/", "**/mesh/", "/ds-0003/"):
             self.assertIn(f"\n{line}\n", gitignore)
@@ -118,6 +130,9 @@ class TestDatabase(unittest.TestCase):
         scans = json.loads(data.split("const scansData = ", 1)[1].rstrip().rstrip(";"))
         self.assertEqual(len(scans), 4)
         self.assertEqual(scans[0]["Segmentation Available"], "FEMUR_LEFT; FEMUR_RIGHT")
+        datasets = json.loads(data.split("const datasetsData = ", 1)[1].split(";\n", 1)[0])
+        self.assertEqual(datasets[1]["Registry"], "https://bonehub.github.io/Public-Datasets/#dataset=2")
+        self.assertNotIn("{{", (folder / "update_data.py").read_text(encoding="utf-8"))
         self.assertTrue((folder / ".nojekyll").exists() and (folder / "update_data.py").exists())
 
 

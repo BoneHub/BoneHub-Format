@@ -21,7 +21,7 @@ from .labelmap import BoneLabelMap, bonehub_to_snomed, part_of, side_of, structu
 from .licenses import LICENSES, RESTRICTED, check_license, is_restricted
 from .metadata import LABEL_KINDS, DatasetInfo, ScanInfo, SubjectInfo, check_label, check_origin, sort_labels
 from .reader import Database, Dataset, Scan, Subject
-from .registry import REGISTRY_URL, load_registry
+from .registry import REGISTRY_URL, load_registry, registry_entry_url
 from .segmentation_file import (
     SEGMENTATION_SUFFIX,
     read_segmentation,
@@ -70,6 +70,7 @@ __all__ = [
     "write_indexed_segmentation",
     "REGISTRY_URL",
     "load_registry",
+    "registry_entry_url",
     "update_segmentation",
     "update_model_files",
     "pack",

@@ -15,7 +15,7 @@ github-webpage/. The webpage options file is a JSON object of build_webpage argu
 "about_html": ..., "contact_html": ..., "note_html": ..., "logo_link": ..., "analytics_html": ...}.
 
 validate, prepare and upload check every dataset ID against the BoneHub registry, read from GitHub unless --registry
-gives another URL or a local copy of the CSV; `validate --registry none` skips the check.
+gives another URL or a local copy of the JSON file; `validate --registry none` skips the check.
 """
 
 import argparse
@@ -43,7 +43,7 @@ def _registry(source: str, optional: bool):
     try:
         return load_registry(source)
     except (OSError, ValueError) as e:
-        raise SystemExit(f"Could not read the registry from {source}: {e}\nPass --registry with a local copy of the CSV.")
+        raise SystemExit(f"Could not read the registry from {source}: {e}\nPass --registry with a local copy of the JSON file.")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -72,7 +72,7 @@ def main(argv: list[str] | None = None) -> int:
 
     for command in (validate, prepare, upload):
         command.add_argument(
-            "--registry", default=REGISTRY_URL, metavar="SOURCE", help="URL or path of the registry CSV (default: on GitHub)"
+            "--registry", default=REGISTRY_URL, metavar="SOURCE", help="URL or path of the registry JSON (default: on GitHub)"
         )
     args = parser.parse_args(argv)
 
