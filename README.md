@@ -300,8 +300,8 @@ Every value has 9 digits (4 + 2 + 2 + 1), except `BACKGROUND = 0`. Use `structur
 
 | Repository | Purpose |
 | --- | --- |
-| [bonehub_dataset_quality_check_server](https://github.com/BoneHub/bonehub_dataset_quality_check_server) | Dockerised server that distributes subjects to reviewers and collects their corrected segmentations (not yet updated to this version of the format) |
-| [bonehub_dataset_quality_check_3dslicer_extension](https://github.com/BoneHub/bonehub_dataset_quality_check_3dslicer_extension) | 3D Slicer extension reviewers use to fetch, correct and submit segmentations |
+| [qc-server](https://github.com/BoneHub/qc-server) | Dockerised server for the quality check of a database: it hands out scans to reviewers in the browser and to editors in 3D Slicer, and writes approved corrections into the database |
+| [Quality-Check-3DSlicer-Extension](https://github.com/BoneHub/Quality-Check-3DSlicer-Extension) | 3D Slicer extension editors use to fetch, correct and submit segmentations |
 
 ## License
 MIT
