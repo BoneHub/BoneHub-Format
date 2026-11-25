@@ -2,8 +2,12 @@
 
 const NUMERIC_COLUMN_TOKENS = ['id', 'age', 'weight', 'height', 'bmi'];
 
+// The table controllers, for the other scripts of the page (coverage.js, datasets.js): window.BoneHubTables.scans has
+// setFilter(description, predicate) to list only the scans a structure or a dataset is chosen for.
+window.BoneHubTables = {};
+
 document.addEventListener('DOMContentLoaded', function() {
-    initializeTableController({
+    window.BoneHubTables.datasets = initializeTableController({
         data: typeof datasetsData !== 'undefined' ? datasetsData : [],
         itemLabel: 'dataset',
         itemLabelPlural: 'datasets',
@@ -22,7 +26,7 @@ document.addEventListener('DOMContentLoaded', function() {
         tableBodyId: 'datasetsTableBody'
     });
 
-    initializeTableController({
+    window.BoneHubTables.scans = initializeTableController({
         data: typeof scansData !== 'undefined' ? scansData : [],
         itemLabel: 'scan',
         itemLabelPlural: 'scans',
@@ -59,6 +63,7 @@ function initializeTableController(config) {
         filterTimer: null,
         cellValueCache: new WeakMap(),
         rowSearchCache: new WeakMap(),
+        rowPredicate: null,
         elements: getTableElements(config)
     };
 
@@ -66,7 +71,8 @@ function initializeTableController(config) {
         return null;
     }
 
-    state.allColumns = state.allData.length > 0 ? Object.keys(state.allData[0]) : [];
+    // Fields whose name starts with '_' hold data for the page's scripts, not columns.
+    state.allColumns = state.allData.length > 0 ? Object.keys(state.allData[0]).filter(key => !key.startsWith('_')) : [];
     state.visibleColumns = new Set(state.allColumns);
 
     buildTableStructure(state);
@@ -76,7 +82,40 @@ function initializeTableController(config) {
     setupEventListeners(state);
     updateStickyColumnOffsets(state);
 
+    state.setFilter = function(description, predicate) {
+        setRowPredicate(state, description, predicate);
+    };
     return state;
+}
+
+function setRowPredicate(state, description, predicate) {
+    state.rowPredicate = predicate || null;
+    const controls = state.elements.searchInput ? state.elements.searchInput.closest('.search-controls') : null;
+    let chip = controls ? controls.parentElement.querySelector('.filter-chip') : null;
+    if (predicate && controls) {
+        if (!chip) {
+            chip = document.createElement('div');
+            chip.className = 'filter-chip';
+            chip.setAttribute('role', 'status');
+            controls.insertAdjacentElement('afterend', chip);
+        }
+        chip.innerHTML = '';
+        const text = document.createElement('span');
+        text.textContent = `Showing ${state.itemLabelPlural} with: ${description}`;
+        const remove = document.createElement('button');
+        remove.type = 'button';
+        remove.className = 'filter-chip-remove';
+        remove.setAttribute('aria-label', `Remove the filter: ${description}`);
+        remove.textContent = '×';
+        remove.addEventListener('click', function() {
+            setRowPredicate(state, null, null);
+        });
+        chip.appendChild(text);
+        chip.appendChild(remove);
+    } else if (chip) {
+        chip.remove();
+    }
+    applyFilters(state, true);
 }
 
 function getTableElements(config) {
@@ -222,7 +261,7 @@ function setupEventListeners(state) {
             });
 
             state.columnFilters = {};
-            applyFilters(state, true);
+            setRowPredicate(state, null, null);
         });
     }
 
@@ -297,6 +336,10 @@ function applyFilters(state, resetPage) {
     });
 
     state.filteredData = state.allData.filter(row => {
+        if (state.rowPredicate && !state.rowPredicate(row)) {
+            return false;
+        }
+
         for (const { column, filterValue, numericComparison } of preparedColumnFilters) {
             const cellValue = getCachedCellValue(state, row, column);
 
@@ -673,7 +716,7 @@ function getCachedRowSearchText(state, row) {
         return cachedText;
     }
 
-    cachedText = Object.values(row).map(formatCellValue).join(' ').toLowerCase();
+    cachedText = state.allColumns.map(column => formatCellValue(row[column])).join(' ').toLowerCase();
     state.rowSearchCache.set(row, cachedText);
     return cachedText;
 }

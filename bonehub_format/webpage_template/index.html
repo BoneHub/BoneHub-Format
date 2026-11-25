@@ -31,8 +31,54 @@
             {{ABOUT}}
         </section>
 
+        <section class="getting-started" id="getting-started">
+            <h2>🚀 Getting Started</h2>
+            <p class="section-intro">The database is a Hugging Face dataset repository in the
+                <a href="https://github.com/BoneHub/BoneHub-Format" target="_blank" rel="noopener noreferrer">BoneHub format</a>.
+                Download all of it or only the part you need, read it with the <code>bonehub-format</code> Python package,
+                and cite the source datasets of the scans you use (each card under <a href="#datasets-cards">Source Datasets</a>
+                has its BibTeX).</p>
+            <div class="steps-grid">
+                <article class="step-card">
+                    <h3><span class="step-number">1</span>Download</h3>
+                    <p>Everything, or one source dataset (here dataset 27):</p>
+                    <div class="code-block"><button type="button" class="copy-button">Copy</button><pre><code>pip install -U "huggingface_hub[hf_xet]"
+hf download {{HF_REPO_ID}} --repo-type dataset --local-dir data
+hf download {{HF_REPO_ID}} --repo-type dataset --local-dir data \
+    --include "ds-0027/**" --include "index/*"</code></pre></div>
+                </article>
+                <article class="step-card">
+                    <h3><span class="step-number">2</span>Choose scans in the index</h3>
+                    <p>One row per scan, with its subject, labels, licenses and image geometry:</p>
+                    <div class="code-block"><button type="button" class="copy-button">Copy</button><pre><code>import pandas as pd
+from huggingface_hub import snapshot_download
+
+scans = pd.read_parquet("hf://datasets/{{HF_REPO_ID}}/index/scans.parquet")
+chosen = scans[scans["segmentation"].apply(lambda l: "FEMUR_LEFT" in l)
+               &amp; scans["image_published"]]
+snapshot_download("{{HF_REPO_ID}}", repo_type="dataset", local_dir="data",
+                  allow_patterns=[f"{key}/*" for key in chosen["scan"]]
+                  + ["ds-*/dataset.json", "ds-*/*/subject.json"])</code></pre></div>
+                </article>
+                <article class="step-card">
+                    <h3><span class="step-number">3</span>Read it in Python</h3>
+                    <p>Each scan has one segmentation per dataset that provided one:</p>
+                    <div class="code-block"><button type="button" class="copy-button">Copy</button><pre><code>pip install "bonehub-format[io] @ git+https://github.com/BoneHub/BoneHub-Format.git"
+
+from bonehub_format import Database, read_segmentation
+
+for scan in Database("data").scans():
+    print(scan.key, scan.info.modality, scan.image_path)
+    for dataset_id, path in scan.segmentation_paths().items():
+        mask = read_segmentation(path)  # SimpleITK image of LabelMap values</code></pre></div>
+                </article>
+            </div>
+            <p class="section-note">Files under a restricted license are listed in the index but not in the repository
+                (<code>image_published</code> and <code>published</code> columns); the cards below say where to obtain them.</p>
+        </section>
+
         <section class="overview-section">
-            <h2>Dataset Overview</h2>
+            <h2>📊 Database Overview</h2>
 
             <div id="overviewMetrics" class="overview-metrics" aria-live="polite">
                 <!-- Overview metric cards are rendered by overview.js -->
@@ -63,7 +109,7 @@
                 </div>
 
                 <div class="overview-panel">
-                    <h3>Most Frequent Bone Labels</h3>
+                    <h3>Most Frequent Structures</h3>
                     <ol id="overviewTopBones" class="overview-top-bones" aria-live="polite">
                         <!-- Bone frequencies are rendered by overview.js -->
                     </ol>
@@ -78,7 +124,53 @@
             </div>
         </section>
 
-        <section class="search-section">
+        <section class="coverage-section" id="coverage">
+            <h2>🦴 Body Coverage</h2>
+            <p class="section-intro">How many scans have each structure segmented or modelled, from any of the datasets
+                that gave the scan data. Hover a structure for its counts; click it to list its scans below.</p>
+            <div class="segmented-control" id="coverageKind" role="group" aria-label="Kind of data counted">
+                <button type="button" data-value="any" aria-pressed="true">Segmentation or mesh</button>
+                <button type="button" data-value="segmentation" aria-pressed="false">Segmentation</button>
+                <button type="button" data-value="mesh" aria-pressed="false">Mesh</button>
+            </div>
+            <div class="coverage-grid">
+                <div class="overview-panel skeleton-panel">
+                    <h3>Bones</h3>
+                    <div id="skeletonMap" class="skeleton-map"></div>
+                    <div id="skeletonLegend" class="viz-legend" aria-label="Color scale"></div>
+                </div>
+                <div class="overview-panel soft-panel">
+                    <h3>Muscles, cartilage, ligaments and body composition</h3>
+                    <div id="softTissueBars" class="soft-tissue"></div>
+                </div>
+            </div>
+        </section>
+
+        <section class="matrix-section" id="matrix">
+            <h2>🧩 Coverage by Dataset</h2>
+            <p class="section-intro">Which dataset gave which structures: the number of scans in which a dataset segmented
+                or modelled a structure group, or the share of the dataset's labelled scans. Where several datasets labelled
+                the same scan, each version is kept and counted.</p>
+            <div class="segmented-control" id="matrixMode" role="group" aria-label="Value shown">
+                <button type="button" data-value="scans" aria-pressed="true">Scans</button>
+                <button type="button" data-value="percent" aria-pressed="false">% of the dataset's scans</button>
+            </div>
+            <div id="coverageMatrix" class="matrix-container"></div>
+            <div id="matrixLegend" class="viz-legend" aria-label="Color scale"></div>
+        </section>
+
+        <section class="cards-section" id="datasets-cards">
+            <h2>📚 Source Datasets</h2>
+            <p class="section-intro">The public datasets this database was converted from, with their licenses per kind of
+                data and how many of their files are published here.</p>
+            <div class="search-controls">
+                <input type="text" id="datasetCardFilter" placeholder="Filter datasets..." aria-label="Filter datasets">
+                <span id="datasetCardCount" class="stats"></span>
+            </div>
+            <div id="datasetCards" class="dataset-cards"></div>
+        </section>
+
+        <section class="search-section" id="scans">
             <h2>🔍 Browse Scans</h2>
             <div class="search-controls">
                 <input type="text" id="searchInput" placeholder="Search scans..." aria-label="Search scans">
@@ -154,6 +246,8 @@
     <script src="data.js"></script>
     <script src="overview.js"></script>
     <script src="app.js"></script>
+    <script src="coverage.js"></script>
+    <script src="datasets.js"></script>
     {{ANALYTICS}}
 </body>
 

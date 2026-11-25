@@ -2,8 +2,10 @@
 
     database = Database("path/to/database")
     for scan in database.scans():
-        print(scan.key, scan.info.modality, scan.info.labels("segmentation"), scan.image_path)
-        for label, files in scan.model_files("mesh").items():
+        print(scan.key, scan.info.modality, scan.image_path, scan.license("image"))
+        for dataset_id, path in scan.segmentation_paths().items():   # one segmentation per provider dataset
+            print(dataset_id, scan.info.labels("segmentation", dataset_id), path)
+        for label, files in scan.model_files("mesh", dataset_id=180).items():
             mesh_bytes = files[0].read_bytes()
 
 Metadata is read when first used and then kept.
@@ -18,7 +20,7 @@ from pathlib import Path
 
 from . import layout
 from ._version import SCHEMA_VERSION, is_compatible_schema_version
-from .metadata import DatasetInfo, ScanInfo, SubjectInfo
+from .metadata import DatasetInfo, ScanInfo, SubjectInfo, file_license
 
 
 def _ids(folder: Path, parse, json_name: str) -> list[int]:
@@ -39,15 +41,22 @@ class Database:
         self.path = Path(path)
         if not self.path.is_dir():
             raise FileNotFoundError(f"'{self.path}' is not a folder.")
+        self._datasets: dict[int, Dataset] = {}
 
     def dataset_ids(self) -> list[int]:
         return _ids(self.path, layout.parse_dataset_dir, layout.DATASET_JSON)
 
     def datasets(self) -> list[Dataset]:
-        return [Dataset(self, dataset_id) for dataset_id in self.dataset_ids()]
+        return [self.dataset(dataset_id) for dataset_id in self.dataset_ids()]
 
     def dataset(self, dataset_id: int) -> Dataset:
-        return Dataset(self, dataset_id)
+        """The dataset folder of this ID (kept, so that its info is read once)."""
+        if dataset_id not in self._datasets:
+            self._datasets[dataset_id] = Dataset(self, dataset_id)
+        return self._datasets[dataset_id]
+
+    def has_dataset(self, dataset_id: int) -> bool:
+        return (layout.dataset_path(self.path, dataset_id) / layout.DATASET_JSON).is_file()
 
     def scans(self) -> Iterator[Scan]:
         for dataset in self.datasets():
@@ -150,22 +159,43 @@ class Scan:
         return ScanInfo.load(self.path / layout.SCAN_JSON)
 
     @property
-    def license(self) -> str | None:
-        """The scan's license: its own where it has one, else its dataset's."""
-        return self.info.license or self.dataset.info.license
+    def provider_ids(self) -> list[int]:
+        """The BoneHub IDs of the datasets that gave the scan data (its home dataset among them if it gave any)."""
+        return self.info.provider_ids
+
+    def license(self, kind: str, dataset_id: int | None = None) -> str | None:
+        """The license of a kind of data ('image', 'segmentation', 'mesh', 'nurbs') of the scan, given by a provider
+        dataset (for the image, the dataset it came from): the scan's own for that provider where scan.json gives one,
+        else that of the provider's subset, else the provider dataset's. None if it is not known, e.g. when the
+        provider's dataset.json is not in the database."""
+        if kind == "image":
+            dataset_id = self.info.image_provider
+            if dataset_id is None:
+                return None
+        elif dataset_id is None:
+            raise ValueError(f"Say which provider dataset's {kind} the license is wanted for.")
+        database = self.dataset.database
+        provider_dataset = database.dataset(dataset_id).info if database.has_dataset(dataset_id) else None
+        return file_license(self.info, kind, dataset_id, provider_dataset)
 
     @property
     def image_path(self) -> Path | None:
         path = self.path / layout.IMAGE_FILE
         return path if path.is_file() else None
 
-    @property
-    def segmentation_path(self) -> Path | None:
-        path = self.path / layout.SEGMENTATION_FILE
+    def segmentation_path(self, dataset_id: int) -> Path | None:
+        """The segmentation a provider dataset gave the scan, or None."""
+        path = layout.segmentation_file(self.path, dataset_id)
         return path if path.is_file() else None
 
-    def model_files(self, kind: str) -> dict[str, list[Path | zipfile.Path]]:
-        """Label -> files of a model kind ('mesh' or 'nurbs'), from the folder if the scan has it, else from the zip.
+    def segmentation_paths(self) -> dict[int, Path]:
+        """Provider dataset ID -> its segmentation, for every provider that gave one."""
+        paths = {dataset_id: self.segmentation_path(dataset_id) for dataset_id in self.provider_ids}
+        return {dataset_id: path for dataset_id, path in paths.items() if path is not None}
+
+    def model_files(self, kind: str, dataset_id: int) -> dict[str, list[Path | zipfile.Path]]:
+        """Label -> files of a model kind ('mesh' or 'nurbs') a provider dataset gave the scan, from the folder if the
+        scan has it, else from the zip.
 
         Files from a zip are zipfile.Path objects, read with .read_bytes() or .open(); unpack the zips (see
         archive.unpack) to have plain files instead.
@@ -173,8 +203,8 @@ class Scan:
         suffixes = layout.MODEL_KINDS.get(kind)
         if suffixes is None:
             raise ValueError(f"Unknown kind '{kind}'; the kinds are {list(layout.MODEL_KINDS)}.")
-        folder = layout.model_folder(self.path, kind)
-        zip_path = layout.model_zip(self.path, kind)
+        folder = layout.model_folder(self.path, kind, dataset_id)
+        zip_path = layout.model_zip(self.path, kind, dataset_id)
         if folder.is_dir():
             entries = [entry for entry in folder.iterdir() if entry.is_file()]
         elif zip_path.is_file():

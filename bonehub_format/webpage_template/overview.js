@@ -99,6 +99,7 @@
         const uniqueBoneLabels = new Set(allBoneLabels);
 
         const scansWithImage = scans.filter(scan => scan['Image Available'] === true || scan['Image Available'] === 'true').length;
+        const imagesPublished = scans.filter(scan => scan['Image Published'] === true || scan['Image Published'] === 'true').length;
         const scansWithSeg = scans.filter(scan => parseItemList(scan['Segmentation Available']).length > 0).length;
         const scansWithMesh = scans.filter(scan => parseItemList(scan['Mesh Available']).length > 0).length;
         const scansWithNurbs = scans.filter(scan => parseItemList(scan['NURBS Available']).length > 0).length;
@@ -133,6 +134,7 @@
             ageKnownCount: ages.length,
             uniqueBoneLabelsCount: uniqueBoneLabels.size,
             scansWithImage,
+            imagesPublished,
             totalSegmentationMasks: segmentationItems.length,
             totalMeshes: meshItems.length,
             totalNurbs: nurbsItems.length,
@@ -215,9 +217,14 @@
             `${formatNumber(summary.totalScans)} scans from ${formatNumber(summary.totalDatasets)} datasets`
         ));
         metricsRoot.appendChild(createMetricCard(
-            'Unique Bone Labels',
+            'Unique Labels',
             formatNumber(summary.uniqueBoneLabelsCount),
-            'Across segmentation, mesh, and NURBS fields'
+            'Bones, muscles and other structures, across segmentations, meshes and NURBS'
+        ));
+        metricsRoot.appendChild(createMetricCard(
+            'Images',
+            formatNumber(summary.scansWithImage),
+            `${formatNumber(summary.imagesPublished)} published here; the others are restricted`
         ));
         metricsRoot.appendChild(createMetricCard(
             'Segmentation Masks',
@@ -273,7 +280,7 @@
 
         topBonesRoot.innerHTML = '';
         if (summary.topBones.length === 0) {
-            topBonesRoot.innerHTML = '<li class="overview-empty">No bone labels available.</li>';
+            topBonesRoot.innerHTML = '<li class="overview-empty">No labels available.</li>';
         } else {
             summary.topBones.forEach(([label, count]) => {
                 const li = document.createElement('li');

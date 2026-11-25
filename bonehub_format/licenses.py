@@ -1,11 +1,16 @@
-"""Licenses a dataset or a scan can be under.
+"""Licenses the data of a dataset can be under.
 
-The `license` of dataset.json and scan.json is one of the SPDX identifiers in LICENSES, or RESTRICTED. RESTRICTED
-marks data under a custom license with restricted access: it is converted like any other data, but it stays out of
-the published dataset, and the dataset card says where to obtain it.
+A license is given per kind of data (LICENSE_KINDS: the image, the segmentation, the meshes, the NURBS surfaces), in
+dataset.json, in a subset of it, or for one provider of one scan in scan.json (see metadata.Licenses). Each is one of
+the SPDX identifiers in LICENSES, or RESTRICTED. RESTRICTED marks data under a custom license with restricted access:
+it is converted like any other data, but its files stay out of the published database, and the dataset card says
+where to obtain them. The kinds of one scan can differ, e.g. a restricted image with an open segmentation.
 """
 
 RESTRICTED = "restricted"
+
+#: The kinds of data a license is given for.
+LICENSE_KINDS: tuple[str, ...] = ("image", "segmentation", "mesh", "nurbs")
 
 _CC_ELEMENTS = {"BY": "Attribution", "SA": "ShareAlike", "NC": "NonCommercial", "ND": "NoDerivatives"}
 _CC_VARIANTS = ("BY", "BY-SA", "BY-NC", "BY-NC-SA", "BY-ND", "BY-NC-ND")
@@ -34,6 +39,9 @@ LICENSES: dict[str, tuple[str, str]] = {
         "Open Data Commons Public Domain Dedication and License 1.0",
         "https://opendatacommons.org/licenses/pddl/1-0/",
     ),
+    "MIT": ("MIT License", "https://opensource.org/license/mit"),
+    "Apache-2.0": ("Apache License 2.0", "https://www.apache.org/licenses/LICENSE-2.0"),
+    "GPL-3.0-only": ("GNU General Public License v3.0 only", "https://www.gnu.org/licenses/gpl-3.0.html"),
 }
 
 
@@ -49,6 +57,11 @@ def check_license(value: str) -> str:
 
 def is_restricted(value: str | None) -> bool:
     return value == RESTRICTED
+
+
+def is_publishable(value: str | None) -> bool:
+    """True for data that may be published: its license is known and not restricted."""
+    return value is not None and value != RESTRICTED
 
 
 def license_name(value: str) -> str:

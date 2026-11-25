@@ -1,8 +1,9 @@
-"""The zips in which a scan's per-label model files are published: mesh.zip and nurbs.zip.
+"""The zips in which a scan's per-label model files are published: mesh.ds-0040.zip, nurbs.ds-0040.zip, ...
 
-A scan keeps its model files in folders (mesh/, nurbs/), one file per label and file type. pack() writes each folder
-into a zip of the same name; the zips are published and the folders are not. unpack() does the reverse for a
-downloaded copy. A zip is rewritten only when its folder has changed, and the same files always give the same zip.
+A scan keeps the model files each provider gave it in folders named after the kind and the provider (mesh.ds-0040/,
+nurbs.ds-0040/), one file per label and file type. pack() writes each folder into a zip of the same name; the zips are
+published and the folders are not. unpack() does the reverse for a downloaded copy. A zip is rewritten only when its
+folder has changed, and the same files always give the same zip.
 """
 
 import os
@@ -51,13 +52,25 @@ def zip_is_current(folder: Path, zip_path: Path, kind: str) -> bool:
     return found == expected
 
 
+def model_entries(scan_folder: Path) -> list[tuple[str, int, Path, Path]]:
+    """(kind, provider dataset ID, folder, zip) for every model folder or zip of a scan, in name order."""
+    found = {}
+    for entry in Path(scan_folder).iterdir():
+        parsed = layout.parse_scan_entry(entry.name)
+        if parsed is None or parsed[0] == "segmentation":
+            continue
+        kind, dataset_id, _ = parsed
+        found[(kind, dataset_id)] = (layout.model_folder(scan_folder, kind, dataset_id), layout.model_zip(scan_folder, kind, dataset_id))
+    return [(kind, dataset_id, *paths) for (kind, dataset_id), paths in sorted(found.items())]
+
+
 def pack_folder(folder: Path, kind: str) -> bool:
-    """Write <kind>.zip from the scan's <kind>/ folder unless it is current; return True if it was written.
+    """Write <folder>.zip from a model folder (e.g. mesh.ds-0040/) unless it is current; return True if it was written.
 
     An empty or missing folder leaves no zip.
     """
     folder = Path(folder)
-    zip_path = folder.with_suffix(".zip")
+    zip_path = folder.parent / f"{folder.name}.zip"
     files = model_folder_files(folder, kind) if folder.is_dir() else []
     if not files:
         if folder.is_dir():
@@ -87,10 +100,9 @@ def pack_folder(folder: Path, kind: str) -> bool:
 def pack_scan(scan_folder: Path) -> list[Path]:
     """Write the zips of a scan's model folders that are not current; return the zips written."""
     written = []
-    for kind in layout.MODEL_KINDS:
-        folder = layout.model_folder(scan_folder, kind)
-        if pack_folder(folder, kind):
-            written.append(folder.with_suffix(".zip"))
+    for kind, _, folder, zip_path in model_entries(scan_folder):
+        if folder.is_dir() and pack_folder(folder, kind):
+            written.append(zip_path)
     return written
 
 
@@ -98,9 +110,7 @@ def unpack_scan(scan_folder: Path, overwrite: bool = False) -> list[Path]:
     """Extract the scan's model zips into folders that do not exist yet (or into all, with overwrite); return the
     folders written."""
     written = []
-    for kind in layout.MODEL_KINDS:
-        folder = layout.model_folder(scan_folder, kind)
-        zip_path = layout.model_zip(scan_folder, kind)
+    for kind, _, folder, zip_path in model_entries(scan_folder):
         if not zip_path.is_file() or (folder.is_dir() and not overwrite):
             continue
         folder.mkdir(exist_ok=True)

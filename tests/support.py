@@ -9,13 +9,15 @@ from pathlib import Path
 import numpy as np
 import SimpleITK as sitk
 
-from bonehub_format import BoneLabelMap as BLM
-from bonehub_format import DatasetInfo, ScanInfo, SubjectInfo
-from bonehub_format.converter import DatasetConverter, ScanSource, SubjectSource
+from bonehub_format import LabelMap as LM
+from bonehub_format import DatasetInfo, Licenses, ScanInfo, SubjectInfo
+from bonehub_format.converter import Contribution, CustomDataHandlers, DatasetConverter, ScanSource, SubjectSource
 from bonehub_format.export import export_nii_segmentation
 
 SHAPE = (12, 16, 16)  # z, y, x
-LABEL_MAPPING = {1: BLM.FEMUR_LEFT.value, 2: BLM.FEMUR_RIGHT.value}
+LABEL_MAPPING = {1: LM.FEMUR_LEFT.value, 2: LM.FEMUR_RIGHT.value}
+PROVIDER_ID = 7  # a second synthetic dataset, which gives every scan of the first a segmentation of its own
+PROVIDER_MAPPING = {1: LM.FEMUR_LEFT.value, 2: LM.GLUTEUS_MAXIMUS_RIGHT.value}
 FAIL_ON = "fail_me"  # a subject whose segmentation export raises
 
 
@@ -57,7 +59,8 @@ def read_dataset(dataset_root: Path) -> list[SubjectSource]:
     for subject_folder in dataset_root.iterdir():  # not sorted: the converter numbers them in a fixed order
         scans = [
             ScanSource(
-                info=ScanInfo(source_scan_id=f"{subject_folder.name}/{scan_folder.name}", modality="CT", age=60),
+                source_scan_id=f"{subject_folder.name}/{scan_folder.name}",
+                info=ScanInfo(modality="CT", age=60),
                 image_path=scan_folder / "image.nii.gz",
                 segmentation_paths=[scan_folder / "labels.nii.gz"],
                 mesh_paths=[scan_folder / "FEMUR_LEFT.stl"],
@@ -66,13 +69,35 @@ def read_dataset(dataset_root: Path) -> list[SubjectSource]:
             for scan_folder in subject_folder.iterdir()
         ]
         if len(scans) == 2:
-            scans[1].registered_to = scans[0].info.source_scan_id
-        subjects.append(SubjectSource(info=SubjectInfo(source_subject_id=subject_folder.name, gender="F"), scans=scans))
+            scans[1].registered_to = scans[0].source_scan_id
+        subjects.append(SubjectSource(source_subject_id=subject_folder.name, info=SubjectInfo(gender="F"), scans=scans))
     return subjects
 
 
+def read_dataset_with_contributions(dataset_root: Path) -> list[SubjectSource]:
+    """read_dataset, with the segmentation dataset PROVIDER_ID gives each scan: the same label file, other labels."""
+    subjects = read_dataset(dataset_root)
+    for subject in subjects:
+        subject.other_sources = {PROVIDER_ID: f"provider-{subject.source_subject_id}"}
+        for scan in subject.scans:
+            scan.contributions = [
+                Contribution(
+                    dataset_id=PROVIDER_ID,
+                    source_scan_id=f"provider-{scan.source_scan_id}",
+                    segmentation_paths=scan.segmentation_paths,
+                    segmentation_origin="model:TestModel@2.0",
+                    handlers=CustomDataHandlers(export_segmentation=export_provider_segmentation),
+                )
+            ]
+    return subjects
+
+
+def export_provider_segmentation(scan: Contribution, output_path: Path) -> None:
+    export_nii_segmentation(scan.segmentation_paths, output_path, [PROVIDER_MAPPING])
+
+
 def export_segmentation(scan: ScanSource, output_path: Path) -> None:
-    if FAIL_ON in scan.info.source_scan_id:
+    if FAIL_ON in scan.source_scan_id:
         raise RuntimeError("This subject fails on purpose.")
     export_nii_segmentation(scan.segmentation_paths, output_path, [LABEL_MAPPING])
 
@@ -83,9 +108,23 @@ def export_mesh(scan: ScanSource, output_folder: Path) -> None:
 
 
 class SyntheticConverter(DatasetConverter):
-    def __init__(self, dataset_root: Path, license: str = "CC-BY-4.0"):
-        info = DatasetInfo(name="Synthetic", license=license, annotated_labels=["FEMUR_RIGHT", "FEMUR_LEFT"])
+    def __init__(self, dataset_root: Path, license: str | Licenses = "CC-BY-4.0", contributions: bool = False):
+        licenses = license if isinstance(license, Licenses) else Licenses.all(license)
+        info = DatasetInfo(name="Synthetic", license=licenses, annotated_labels=["FEMUR_RIGHT", "FEMUR_LEFT"])
         super().__init__(dataset_root, info)
-        self.custom_data_handlers.read_dataset = read_dataset
+        self.custom_data_handlers.read_dataset = read_dataset_with_contributions if contributions else read_dataset
         self.custom_data_handlers.export_segmentation = export_segmentation
         self.custom_data_handlers.export_mesh = export_mesh
+
+
+def no_subjects(dataset_root: Path) -> list[SubjectSource]:
+    return []  # every subject of the provider lives in the synthetic dataset
+
+
+class ProviderConverter(DatasetConverter):
+    """The dataset PROVIDER_ID: all its data is in the scans of the synthetic dataset, so it writes dataset.json alone."""
+
+    def __init__(self, dataset_root: Path, license: str | Licenses = "CC-BY-NC-4.0"):
+        licenses = license if isinstance(license, Licenses) else Licenses.all(license)
+        super().__init__(dataset_root, DatasetInfo(name="Synthetic provider", license=licenses))
+        self.custom_data_handlers.read_dataset = no_subjects

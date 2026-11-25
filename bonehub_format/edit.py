@@ -4,11 +4,15 @@ Whether a change is made in place or published as a new dataset is up to whoever
 README). In place, the dataset keeps its ID, and the origin each label has in scan.json tells the labels of the source
 from those added later: a bone added by a model is model:<name>@<version>, one drawn or corrected by hand is manual.
 
+A scan holds one segmentation (and one set of model files) per provider dataset. These functions change the files of
+one provider, `dataset_id`, which is the scan's home dataset unless given. A provider without an entry in scan.json
+yet gets one, with the scan's path (e.g. ds-0027/sub-000001/scan-01) as its source_scan_id.
+
 These functions keep scan.json in step with the files. They leave dataset.json alone: when a label is now segmented
 in every scan of the dataset, add it to annotated_labels yourself. Rebuild the index afterwards.
 
     update_segmentation(scan, mask, origin="model:TotalSegmentator@2.4.0")   # add or replace the labels of mask
-    update_segmentation(scan, remove=["PATELLA_LEFT"])
+    update_segmentation(scan, remove=["PATELLA_LEFT"], dataset_id=18)        # in the segmentation dataset 18 gave
     update_model_files(scan, "mesh", {"FEMUR_LEFT": Path("femur.stl")}, origin="derived:my-mesher@1.0")
     update_model_files(scan, "mesh", remove=["FEMUR_LEFT"])
 
@@ -26,8 +30,8 @@ from typing import TYPE_CHECKING, Literal
 
 from . import layout
 from .archive import model_folder_files, pack_scan, unpack_scan
-from .labelmap import BoneLabelMap
-from .metadata import ScanInfo, check_label, check_origin
+from .labelmap import LabelMap
+from .metadata import ProviderInfo, ScanInfo, check_label, check_origin
 from .reader import Scan
 from .segmentation_file import SEGMENTATION_SUFFIX, _io_modules, read_segmentation, write_segmentation
 
@@ -42,6 +46,20 @@ def _scan_folder(scan: Scan | Path) -> Path:
     if not (folder / layout.SCAN_JSON).is_file():
         raise FileNotFoundError(f"'{folder}' has no {layout.SCAN_JSON}.")
     return folder
+
+
+def _provider(folder: Path, info: ScanInfo, dataset_id: int | None) -> tuple[int, ProviderInfo]:
+    """The provider whose files are changed (the home dataset by default) and its entry of scan.json, new if needed."""
+    home = layout.parse_dataset_dir(folder.parent.parent.name)
+    if dataset_id is None:
+        if home is None:
+            raise ValueError(f"'{folder}' is not in a dataset folder (ds-NNNN); give dataset_id.")
+        dataset_id = home
+    provider = info.provider(dataset_id)
+    if provider is None:
+        key = f"{folder.parent.parent.name}/{folder.parent.name}/{folder.name}"
+        provider = ProviderInfo(source_scan_id=key)
+    return dataset_id, provider
 
 
 def _new_origins(labels: set[str], origin: Origin | None, kind: str) -> dict[str, str]:
@@ -62,9 +80,19 @@ def _new_origins(labels: set[str], origin: Origin | None, kind: str) -> dict[str
     return origins
 
 
-def _record(scan: Scan | Path, folder: Path, info: ScanInfo, kind: str, present: Iterable[str], added: dict[str, str]):
-    """Write the labels of a kind into scan.json: the added ones with their new origin, the others as they were."""
-    before = getattr(info, kind) or {}
+def _record(
+    scan: Scan | Path,
+    folder: Path,
+    info: ScanInfo,
+    dataset_id: int,
+    provider: ProviderInfo,
+    kind: str,
+    present: Iterable[str],
+    added: dict[str, str],
+):
+    """Write a provider's labels of a kind into scan.json: the added ones with their new origin, the others as they
+    were."""
+    before = getattr(provider, kind) or {}
     origins = {}
     for label in present:
         if label in added:
@@ -73,7 +101,8 @@ def _record(scan: Scan | Path, folder: Path, info: ScanInfo, kind: str, present:
             origins[label] = before[label]
         else:
             raise ValueError(f"'{folder}' has {kind} data for {label}, which scan.json does not list; fix the scan first.")
-    info.set_labels(kind, list(origins), origins)
+    provider.set_labels(kind, list(origins), origins)
+    info.providers = {**info.providers, layout.provider_key(dataset_id): provider}
     info.save(folder / layout.SCAN_JSON)
     if isinstance(scan, Scan):
         scan.__dict__.pop("info", None)  # read again when next used
@@ -121,21 +150,25 @@ def update_segmentation(
     origin: Origin | None = None,
     remove: Iterable[str] = (),
     overlap: Literal["replace", "keep"] = "replace",
+    dataset_id: int | None = None,
 ) -> list[str]:
-    """Add or replace the labels of `mask` in the scan's segmentation, and take out the labels in `remove`.
+    """Add or replace the labels of `mask` in a provider's segmentation of the scan, and take out the labels in
+    `remove`.
 
-    mask: BoneLabelMap values (0 for background) on the grid of the scan's image, as a SimpleITK image or the path of
+    mask: LabelMap values (0 for background) on the grid of the scan's image, as a SimpleITK image or the path of
         a file SimpleITK reads (a .seg.nrrd is read with read_segmentation). Each label it holds replaces that label.
     origin: where the labels of the mask come from (see check_origin), one for all or one per label.
     remove: labels to take out.
     overlap: where a label of the mask covers a voxel of another label, 'replace' gives the voxel to the mask's label
         and 'keep' leaves it to the label already there.
+    dataset_id: the provider whose segmentation is changed; the scan's home dataset by default.
     Returns the labels of the segmentation afterwards. A label left without voxels is dropped from scan.json, and a
     segmentation left without labels is deleted.
     """
     np, sitk = _io_modules()
     folder = _scan_folder(scan)
     info = ScanInfo.load(folder / layout.SCAN_JSON)
+    dataset_id, provider = _provider(folder, info, dataset_id)
     remove = {check_label(label) for label in remove}
     if overlap not in ("replace", "keep"):
         raise ValueError(f"overlap is 'replace' or 'keep', not {overlap!r}.")
@@ -143,7 +176,7 @@ def update_segmentation(
     if mask is not None and not hasattr(mask, "GetSize"):
         path = Path(mask)
         mask = read_segmentation(path) if path.name.endswith(SEGMENTATION_SUFFIX) else sitk.ReadImage(str(path))
-    segmentation_path = folder / layout.SEGMENTATION_FILE
+    segmentation_path = layout.segmentation_file(folder, dataset_id)
     if segmentation_path.is_file():
         current_image = read_segmentation(segmentation_path)
     else:
@@ -159,16 +192,16 @@ def update_segmentation(
         new = sitk.GetArrayFromImage(mask).astype(np.int64)
         values = [int(v) for v in np.unique(new) if v != 0]
         try:
-            new_labels = {BoneLabelMap(value).name for value in values}
+            new_labels = {LabelMap(value).name for value in values}
         except ValueError as e:
-            raise ValueError(f"The mask holds a value that is not a BoneLabelMap label: {e}") from e
+            raise ValueError(f"The mask holds a value that is not a LabelMap label: {e}") from e
         both = sorted(new_labels & remove)
         if both:
             raise ValueError(f"{both} are both added and removed.")
         added = _new_origins(new_labels, origin, "segmentation")
 
     for label in remove | set(added):
-        current[current == BoneLabelMap[label].value] = 0
+        current[current == LabelMap[label].value] = 0
     if new is not None:
         take = new != 0 if overlap == "replace" else (new != 0) & (current == 0)
         current[take] = new[take]
@@ -183,8 +216,8 @@ def update_segmentation(
     else:
         segmentation_path.unlink(missing_ok=True)
         present = []
-    _record(scan, folder, info, "segmentation", present, added)
-    return info.labels("segmentation")
+    _record(scan, folder, info, dataset_id, provider, "segmentation", present, added)
+    return provider.labels("segmentation")
 
 
 def update_model_files(
@@ -193,13 +226,16 @@ def update_model_files(
     files: Mapping[str, Path | Sequence[Path]] | None = None,
     origin: Origin | None = None,
     remove: Iterable[str] = (),
+    dataset_id: int | None = None,
 ) -> list[str]:
-    """Add or replace the files of labels in the scan's mesh/ or nurbs/ folder, take out labels, and rewrite the zip.
+    """Add or replace the files of labels in a provider's mesh or nurbs folder of the scan (e.g. mesh.ds-0027/), take
+    out labels, and rewrite the zip.
 
     files: label -> the file, or files, to copy in for it, each with a suffix of the kind (.stl for mesh; .iges or
         .step for nurbs). They replace every file the label had.
     origin: where the files come from (see check_origin), one for all or one per label.
     remove: labels whose files are taken out.
+    dataset_id: the provider whose files are changed; the scan's home dataset by default.
     Returns the labels of this kind afterwards. A scan that has only the zip, as a downloaded copy does, is unpacked
     first.
     """
@@ -207,6 +243,7 @@ def update_model_files(
         raise ValueError(f"Unknown kind '{kind}'; the kinds are {list(layout.MODEL_KINDS)}.")
     folder = _scan_folder(scan)
     info = ScanInfo.load(folder / layout.SCAN_JSON)
+    dataset_id, provider = _provider(folder, info, dataset_id)
     suffixes = layout.MODEL_KINDS[kind]
     remove = {check_label(label) for label in remove}
     sources: dict[str, list[Path]] = {}
@@ -223,8 +260,9 @@ def update_model_files(
         raise ValueError(f"{both} are both added and removed.")
     added = _new_origins(set(sources), origin, kind)
 
-    model_folder = layout.model_folder(folder, kind)
-    if not model_folder.is_dir() and layout.model_zip(folder, kind).is_file():
+    model_folder = layout.model_folder(folder, kind, dataset_id)
+    model_zip = layout.model_zip(folder, kind, dataset_id)
+    if not model_folder.is_dir() and model_zip.is_file():
         unpack_scan(folder)
     model_folder.mkdir(exist_ok=True)
     for entry in model_folder_files(model_folder, kind):
@@ -239,6 +277,6 @@ def update_model_files(
         pack_scan(folder)
     else:
         shutil.rmtree(model_folder)
-        layout.model_zip(folder, kind).unlink(missing_ok=True)
-    _record(scan, folder, info, kind, present, added)
-    return info.labels(kind)
+        model_zip.unlink(missing_ok=True)
+    _record(scan, folder, info, dataset_id, provider, kind, present, added)
+    return provider.labels(kind)

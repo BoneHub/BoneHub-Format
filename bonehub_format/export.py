@@ -275,3 +275,28 @@ def get_dicom_metadata(dicom_folder: Path) -> dict:
         "gender": gender,
         "modality": getattr(ds, "Modality", None) or None,
     }
+
+
+def write_stl(vertices: np.ndarray, faces: np.ndarray, output_path: Path) -> None:
+    """Write a triangle mesh as a binary STL file.
+
+    vertices: (N, 3) coordinates in millimetres (LPS, in the physical space of the scan's image where it has one).
+    faces: (M, 3) vertex indices, starting at 0.
+    """
+    vertices = np.asarray(vertices, dtype=np.float32)
+    faces = np.asarray(faces, dtype=np.int64)
+    if vertices.ndim != 2 or vertices.shape[1] != 3 or faces.ndim != 2 or faces.shape[1] != 3:
+        raise ValueError(f"A mesh has (N, 3) vertices and (M, 3) faces, not {vertices.shape} and {faces.shape}.")
+    if faces.size and (faces.min() < 0 or faces.max() >= len(vertices)):
+        raise ValueError("A face refers to a vertex that does not exist.")
+    triangles = vertices[faces]
+    normals = np.cross(triangles[:, 1] - triangles[:, 0], triangles[:, 2] - triangles[:, 0])
+    lengths = np.linalg.norm(normals, axis=1, keepdims=True)
+    normals = np.divide(normals, lengths, out=np.zeros_like(normals), where=lengths > 0)
+    records = np.zeros(len(faces), dtype=[("normal", "<f4", 3), ("triangle", "<f4", (3, 3)), ("attribute", "<u2")])
+    records["normal"] = normals
+    records["triangle"] = triangles
+    with open(output_path, "wb") as f:
+        f.write(b"BoneHub-Format binary STL".ljust(80, b" "))
+        f.write(np.uint32(len(faces)).tobytes())
+        f.write(records.tobytes())

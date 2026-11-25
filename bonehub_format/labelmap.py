@@ -2,8 +2,8 @@ from enum import Enum, unique
 
 
 @unique
-class BoneLabelMap(Enum):
-    r"""Unified bone labels.
+class LabelMap(Enum):
+    r"""Unified labels: the bones, and the cartilage, ligaments, muscles, fat and skin around them.
 
     Label values are built from four independent fields, so that adding a new
     sub-division, tissue, side or bone never forces existing values to move:
@@ -26,12 +26,28 @@ class BoneLabelMap(Enum):
     and every femur label has structure_of(v) == 7100.
 
     structure = R S M M
-        R  region:      1 head, 2 spine, 3 thorax, 4 shoulder+arm, 5 hand,
-                        6 pelvis, 7 leg, 8 foot, 9 whole-body aggregates
-        S  bone family within the region (0 = the region itself)
+        R  region:      1 head, 2 spine and back, 3 thorax and trunk wall,
+                        4 shoulder+arm, 5 hand, 6 pelvis and hip, 7 leg, 8 foot,
+                        9 whole body (aggregates and tissue classes)
+        S  family within the region (0 = the region itself):
+                        1 .. 6  bones
+                        7       cartilage: articular cartilage, intervertebral discs,
+                                costal cartilages
+                        8       ligaments
+                        9       muscles
         MM member within the family (00 = the family itself)
     Structures with S = 0 and MM > 0 are groups spanning several families of their
     region, e.g. PRESACRAL_SPINE and AXIAL_SKELETON.
+
+    Muscles: R900 is every muscle of region R (e.g. MUSCLES_LEG = 7900), and
+    MM = group * 10 + member, as for the phalanges: 791x is the quadriceps,
+    7910 QUADRICEPS_FEMORIS the whole group, 7911 RECTUS_FEMORIS one of its muscles.
+    MM 01 .. 09 are groups that span several muscle groups, e.g. THIGH_MUSCLES.
+    Cartilage and ligament members are numbered 01, 02, ... like bones.
+
+    Region 9 has no families 7 .. 9: its S = 1 .. 8 are whole-body tissue classes
+    for body composition (SKELETAL_MUSCLE, ADIPOSE_TISSUE and its compartments,
+    SKIN), which are not divided into named structures.
 
     part codes.  A structure's parts partition it, so a mask labelled by parts rolls
     up to the whole bone with structure_of.  Landmarks that would overlap a part
@@ -49,7 +65,10 @@ class BoneLabelMap(Enum):
                   12 MANUBRIUM  10 BODY  13 XIPHOID_PROCESS    sternum
         20..29    the bones that fuse into the hip bone
                   20 ILIUM  21 ISCHIUM  22 PUBIS
-        30..89    free
+        30..39    heads of a muscle
+                  30 MEDIAL_HEAD  31 LATERAL_HEAD             gastrocnemius
+                  32 LONG_HEAD    33 SHORT_HEAD               biceps femoris
+        40..89    free
         90..99    project-specific / experimental, never published as canonical
 
     A part name has exactly one code wherever it is used.  Short tubular bones use
@@ -87,7 +106,7 @@ class BoneLabelMap(Enum):
 
     Tissue variants are listed only where cortical/trabecular segmentation is done:
     the six long bones (whole and thirds), every vertebra (whole and body; C1 whole
-    only), the hip bone (whole, ilium, ischium, pubis), and the sacrum, coccyx,
+    only), the hip bone (whole, ilium, ischium, pubis), and the skull, sacrum, coccyx,
     sternum, clavicle, scapula, patella, talus, calcaneus, mandible and maxilla.
     MEDULLARY_CAVITY exists only on the six long bones.  Any other combination, e.g.
     the trabecular core of a metacarpal shaft, is one line to add and moves no
@@ -95,9 +114,8 @@ class BoneLabelMap(Enum):
 
     Mask files store per-file segment numbers, mapped to these values in their header
     (see segmentation_file.py).  Arrays of these values need int32: they reach
-    999_999_999, which float32 cannot represent exactly.  Whether a label was
-    reviewed (its label status) is not part of the value; it is recorded in
-    Subject_info_XXX.json.
+    999_999_999, which float32 cannot represent exactly.  Where a label came from
+    (its origin) is not part of the value; it is recorded in scan.json.
     """
 
     ## 0xxx - background
@@ -105,6 +123,8 @@ class BoneLabelMap(Enum):
 
     ## 1xxx - head
     SKULL = 100000000  # cranium + facial bones; EXCLUDES the auditory ossicles and the hyoid
+    SKULL_CORTICAL = 100000010
+    SKULL_TRABECULAR = 100000020
     SKULL_WITHOUT_MANDIBLE = 100100000  # cranium + facial bones except the mandible
     CRANIUM = 110000000  # braincase only, no facial bones
     FRONTAL_BONE = 110100000
@@ -172,8 +192,17 @@ class BoneLabelMap(Enum):
     STAPES = 140300000  # side not distinguished (either side, or both merged)
     STAPES_LEFT = 140300001
     STAPES_RIGHT = 140300002
+    # 19xx - muscles of the head
+    # MUSCLES_HEAD
+    MUSCLES_HEAD = 190000000  # every muscle of the head; side not distinguished (either side, or both merged)
+    MUSCLES_HEAD_LEFT = 190000001
+    MUSCLES_HEAD_RIGHT = 190000002
+    # EXTRAOCULAR_MUSCLES
+    EXTRAOCULAR_MUSCLES = 191000000  # the rectus and oblique muscles of the eye; side not distinguished (either side, or both merged)
+    EXTRAOCULAR_MUSCLES_LEFT = 191000001
+    EXTRAOCULAR_MUSCLES_RIGHT = 191000002
 
-    ## 2xxx - spine
+    ## 2xxx - spine and back
     VERTEBRAL_COLUMN = 200000000  # C1 .. L6 + sacrum + coccyx
     PRESACRAL_SPINE = 200100000  # C1 .. L6; EXCLUDES sacrum and coccyx
     SACRUM_COCCYX = 200200000  # sacrum + coccyx
@@ -433,8 +462,78 @@ class BoneLabelMap(Enum):
     COCCYX = 250000000  # tailbone; separate from the sacrum
     COCCYX_CORTICAL = 250000010
     COCCYX_TRABECULAR = 250000020
+    # 27xx - intervertebral discs (cartilage of the spine)
+    # INTERVERTEBRAL_DISCS
+    INTERVERTEBRAL_DISCS = 270000000  # every intervertebral disc; fibrocartilage, not bone
+    # INTERVERTEBRAL_DISC_C2_C3
+    INTERVERTEBRAL_DISC_C2_C3 = 270100000
+    # INTERVERTEBRAL_DISC_C3_C4
+    INTERVERTEBRAL_DISC_C3_C4 = 270200000
+    # INTERVERTEBRAL_DISC_C4_C5
+    INTERVERTEBRAL_DISC_C4_C5 = 270300000
+    # INTERVERTEBRAL_DISC_C5_C6
+    INTERVERTEBRAL_DISC_C5_C6 = 270400000
+    # INTERVERTEBRAL_DISC_C6_C7
+    INTERVERTEBRAL_DISC_C6_C7 = 270500000
+    # INTERVERTEBRAL_DISC_C7_T1
+    INTERVERTEBRAL_DISC_C7_T1 = 270600000
+    # INTERVERTEBRAL_DISC_T1_T2
+    INTERVERTEBRAL_DISC_T1_T2 = 270700000
+    # INTERVERTEBRAL_DISC_T2_T3
+    INTERVERTEBRAL_DISC_T2_T3 = 270800000
+    # INTERVERTEBRAL_DISC_T3_T4
+    INTERVERTEBRAL_DISC_T3_T4 = 270900000
+    # INTERVERTEBRAL_DISC_T4_T5
+    INTERVERTEBRAL_DISC_T4_T5 = 271000000
+    # INTERVERTEBRAL_DISC_T5_T6
+    INTERVERTEBRAL_DISC_T5_T6 = 271100000
+    # INTERVERTEBRAL_DISC_T6_T7
+    INTERVERTEBRAL_DISC_T6_T7 = 271200000
+    # INTERVERTEBRAL_DISC_T7_T8
+    INTERVERTEBRAL_DISC_T7_T8 = 271300000
+    # INTERVERTEBRAL_DISC_T8_T9
+    INTERVERTEBRAL_DISC_T8_T9 = 271400000
+    # INTERVERTEBRAL_DISC_T9_T10
+    INTERVERTEBRAL_DISC_T9_T10 = 271500000
+    # INTERVERTEBRAL_DISC_T10_T11
+    INTERVERTEBRAL_DISC_T10_T11 = 271600000
+    # INTERVERTEBRAL_DISC_T11_T12
+    INTERVERTEBRAL_DISC_T11_T12 = 271700000
+    # INTERVERTEBRAL_DISC_T12_L1
+    INTERVERTEBRAL_DISC_T12_L1 = 271800000
+    # INTERVERTEBRAL_DISC_L1_L2
+    INTERVERTEBRAL_DISC_L1_L2 = 271900000
+    # INTERVERTEBRAL_DISC_L2_L3
+    INTERVERTEBRAL_DISC_L2_L3 = 272000000
+    # INTERVERTEBRAL_DISC_L3_L4
+    INTERVERTEBRAL_DISC_L3_L4 = 272100000
+    # INTERVERTEBRAL_DISC_L4_L5
+    INTERVERTEBRAL_DISC_L4_L5 = 272200000
+    # INTERVERTEBRAL_DISC_L5_S1
+    INTERVERTEBRAL_DISC_L5_S1 = 272300000
+    # INTERVERTEBRAL_DISC_T12_T13
+    INTERVERTEBRAL_DISC_T12_T13 = 272400000  # anatomical variant: with a 13th thoracic or a 6th lumbar vertebra
+    # INTERVERTEBRAL_DISC_T13_L1
+    INTERVERTEBRAL_DISC_T13_L1 = 272500000  # anatomical variant: with a 13th thoracic or a 6th lumbar vertebra
+    # INTERVERTEBRAL_DISC_L5_L6
+    INTERVERTEBRAL_DISC_L5_L6 = 272600000  # anatomical variant: with a 13th thoracic or a 6th lumbar vertebra
+    # INTERVERTEBRAL_DISC_L6_S1
+    INTERVERTEBRAL_DISC_L6_S1 = 272700000  # anatomical variant: with a 13th thoracic or a 6th lumbar vertebra
+    # 29xx - muscles of the back
+    # MUSCLES_BACK
+    MUSCLES_BACK = 290000000  # every muscle of the back; side not distinguished (either side, or both merged)
+    MUSCLES_BACK_LEFT = 290000001
+    MUSCLES_BACK_RIGHT = 290000002
+    # AUTOCHTHONOUS_BACK_MUSCLES
+    AUTOCHTHONOUS_BACK_MUSCLES = 291000000  # the deep (intrinsic) back muscles: erector spinae, transversospinales and the small segmental muscles; side not distinguished (either side, or both merged)
+    AUTOCHTHONOUS_BACK_MUSCLES_LEFT = 291000001
+    AUTOCHTHONOUS_BACK_MUSCLES_RIGHT = 291000002
+    # ERECTOR_SPINAE
+    ERECTOR_SPINAE = 291100000  # iliocostalis + longissimus + spinalis; side not distinguished (either side, or both merged)
+    ERECTOR_SPINAE_LEFT = 291100001
+    ERECTOR_SPINAE_RIGHT = 291100002
 
-    ## 3xxx - thorax
+    ## 3xxx - thorax and trunk wall
     THORACIC_CAGE = 300000000  # ribs + costal cartilages + sternum; EXCLUDES the thoracic vertebrae
     # RIBS
     RIBS = 310000000  # all ribs; EXCLUDES sternum and costal cartilages; side not distinguished
@@ -617,49 +716,58 @@ class BoneLabelMap(Enum):
     STERNUM_BODY = 320010000
     STERNUM_XIPHOID_PROCESS = 320013000
     # COSTAL_CARTILAGES
-    COSTAL_CARTILAGES = 330000000  # cartilage, not bone; side not distinguished
-    COSTAL_CARTILAGES_LEFT = 330000001
-    COSTAL_CARTILAGES_RIGHT = 330000002
+    COSTAL_CARTILAGES = 370000000  # cartilage, not bone; side not distinguished
+    COSTAL_CARTILAGES_LEFT = 370000001
+    COSTAL_CARTILAGES_RIGHT = 370000002
     # COSTAL_CARTILAGE_1
-    COSTAL_CARTILAGE_1 = 330100000  # side not distinguished (either side, or both merged)
-    COSTAL_CARTILAGE_1_LEFT = 330100001
-    COSTAL_CARTILAGE_1_RIGHT = 330100002
+    COSTAL_CARTILAGE_1 = 370100000  # side not distinguished (either side, or both merged)
+    COSTAL_CARTILAGE_1_LEFT = 370100001
+    COSTAL_CARTILAGE_1_RIGHT = 370100002
     # COSTAL_CARTILAGE_2
-    COSTAL_CARTILAGE_2 = 330200000  # side not distinguished (either side, or both merged)
-    COSTAL_CARTILAGE_2_LEFT = 330200001
-    COSTAL_CARTILAGE_2_RIGHT = 330200002
+    COSTAL_CARTILAGE_2 = 370200000  # side not distinguished (either side, or both merged)
+    COSTAL_CARTILAGE_2_LEFT = 370200001
+    COSTAL_CARTILAGE_2_RIGHT = 370200002
     # COSTAL_CARTILAGE_3
-    COSTAL_CARTILAGE_3 = 330300000  # side not distinguished (either side, or both merged)
-    COSTAL_CARTILAGE_3_LEFT = 330300001
-    COSTAL_CARTILAGE_3_RIGHT = 330300002
+    COSTAL_CARTILAGE_3 = 370300000  # side not distinguished (either side, or both merged)
+    COSTAL_CARTILAGE_3_LEFT = 370300001
+    COSTAL_CARTILAGE_3_RIGHT = 370300002
     # COSTAL_CARTILAGE_4
-    COSTAL_CARTILAGE_4 = 330400000  # side not distinguished (either side, or both merged)
-    COSTAL_CARTILAGE_4_LEFT = 330400001
-    COSTAL_CARTILAGE_4_RIGHT = 330400002
+    COSTAL_CARTILAGE_4 = 370400000  # side not distinguished (either side, or both merged)
+    COSTAL_CARTILAGE_4_LEFT = 370400001
+    COSTAL_CARTILAGE_4_RIGHT = 370400002
     # COSTAL_CARTILAGE_5
-    COSTAL_CARTILAGE_5 = 330500000  # side not distinguished (either side, or both merged)
-    COSTAL_CARTILAGE_5_LEFT = 330500001
-    COSTAL_CARTILAGE_5_RIGHT = 330500002
+    COSTAL_CARTILAGE_5 = 370500000  # side not distinguished (either side, or both merged)
+    COSTAL_CARTILAGE_5_LEFT = 370500001
+    COSTAL_CARTILAGE_5_RIGHT = 370500002
     # COSTAL_CARTILAGE_6
-    COSTAL_CARTILAGE_6 = 330600000  # side not distinguished (either side, or both merged)
-    COSTAL_CARTILAGE_6_LEFT = 330600001
-    COSTAL_CARTILAGE_6_RIGHT = 330600002
+    COSTAL_CARTILAGE_6 = 370600000  # side not distinguished (either side, or both merged)
+    COSTAL_CARTILAGE_6_LEFT = 370600001
+    COSTAL_CARTILAGE_6_RIGHT = 370600002
     # COSTAL_CARTILAGE_7
-    COSTAL_CARTILAGE_7 = 330700000  # side not distinguished (either side, or both merged)
-    COSTAL_CARTILAGE_7_LEFT = 330700001
-    COSTAL_CARTILAGE_7_RIGHT = 330700002
+    COSTAL_CARTILAGE_7 = 370700000  # side not distinguished (either side, or both merged)
+    COSTAL_CARTILAGE_7_LEFT = 370700001
+    COSTAL_CARTILAGE_7_RIGHT = 370700002
     # COSTAL_CARTILAGE_8
-    COSTAL_CARTILAGE_8 = 330800000  # side not distinguished (either side, or both merged)
-    COSTAL_CARTILAGE_8_LEFT = 330800001
-    COSTAL_CARTILAGE_8_RIGHT = 330800002
+    COSTAL_CARTILAGE_8 = 370800000  # side not distinguished (either side, or both merged)
+    COSTAL_CARTILAGE_8_LEFT = 370800001
+    COSTAL_CARTILAGE_8_RIGHT = 370800002
     # COSTAL_CARTILAGE_9
-    COSTAL_CARTILAGE_9 = 330900000  # side not distinguished (either side, or both merged)
-    COSTAL_CARTILAGE_9_LEFT = 330900001
-    COSTAL_CARTILAGE_9_RIGHT = 330900002
+    COSTAL_CARTILAGE_9 = 370900000  # side not distinguished (either side, or both merged)
+    COSTAL_CARTILAGE_9_LEFT = 370900001
+    COSTAL_CARTILAGE_9_RIGHT = 370900002
     # COSTAL_CARTILAGE_10
-    COSTAL_CARTILAGE_10 = 331000000  # side not distinguished (either side, or both merged)
-    COSTAL_CARTILAGE_10_LEFT = 331000001
-    COSTAL_CARTILAGE_10_RIGHT = 331000002
+    COSTAL_CARTILAGE_10 = 371000000  # side not distinguished (either side, or both merged)
+    COSTAL_CARTILAGE_10_LEFT = 371000001
+    COSTAL_CARTILAGE_10_RIGHT = 371000002
+    # 39xx - muscles of the trunk wall (thorax and abdomen)
+    # MUSCLES_TRUNK_WALL
+    MUSCLES_TRUNK_WALL = 390000000  # every muscle of the thoracic and abdominal wall; side not distinguished (either side, or both merged)
+    MUSCLES_TRUNK_WALL_LEFT = 390000001
+    MUSCLES_TRUNK_WALL_RIGHT = 390000002
+    # RECTUS_ABDOMINIS
+    RECTUS_ABDOMINIS = 391000000  # side not distinguished (either side, or both merged)
+    RECTUS_ABDOMINIS_LEFT = 391000001
+    RECTUS_ABDOMINIS_RIGHT = 391000002
 
     ## 4xxx - shoulder girdle and arm
     # UPPER_EXTREMITY
@@ -1186,7 +1294,7 @@ class BoneLabelMap(Enum):
     SESAMOID_HAND_1_MCP_ULNAR_LEFT = 541200001
     SESAMOID_HAND_1_MCP_ULNAR_RIGHT = 541200002
 
-    ## 6xxx - pelvis
+    ## 6xxx - pelvis and hip
     PELVIS = 600000000  # the bony pelvis: both hip bones + sacrum + coccyx
     # HIP_BONE
     HIP_BONE = 610000000  # os coxae: ilium + ischium + pubis fused; side not distinguished
@@ -1225,6 +1333,80 @@ class BoneLabelMap(Enum):
     HIP_BONE_PUBIS_TRABECULAR = 610022020
     HIP_BONE_PUBIS_TRABECULAR_LEFT = 610022021
     HIP_BONE_PUBIS_TRABECULAR_RIGHT = 610022022
+    # 67xx - cartilage of the pelvis
+    # CARTILAGE_PELVIS
+    CARTILAGE_PELVIS = 670000000  # all articular cartilage of the pelvis; side not distinguished (either side, or both merged)
+    CARTILAGE_PELVIS_LEFT = 670000001
+    CARTILAGE_PELVIS_RIGHT = 670000002
+    # ACETABULUM_CARTILAGE
+    ACETABULUM_CARTILAGE = 670100000  # articular cartilage of the acetabulum; side not distinguished (either side, or both merged)
+    ACETABULUM_CARTILAGE_LEFT = 670100001
+    ACETABULUM_CARTILAGE_RIGHT = 670100002
+    # 69xx - muscles of the hip; MM = group * 10 + member (0 = the whole group)
+    # MUSCLES_HIP
+    MUSCLES_HIP = 690000000  # every muscle of the hip and pelvis; side not distinguished (either side, or both merged)
+    MUSCLES_HIP_LEFT = 690000001
+    MUSCLES_HIP_RIGHT = 690000002
+    # GLUTEAL_MUSCLES
+    GLUTEAL_MUSCLES = 691000000  # gluteus maximus, medius, minimus + tensor fasciae latae; side not distinguished (either side, or both merged)
+    GLUTEAL_MUSCLES_LEFT = 691000001
+    GLUTEAL_MUSCLES_RIGHT = 691000002
+    # GLUTEUS_MAXIMUS
+    GLUTEUS_MAXIMUS = 691100000  # side not distinguished (either side, or both merged)
+    GLUTEUS_MAXIMUS_LEFT = 691100001
+    GLUTEUS_MAXIMUS_RIGHT = 691100002
+    # GLUTEUS_MEDIUS
+    GLUTEUS_MEDIUS = 691200000  # side not distinguished (either side, or both merged)
+    GLUTEUS_MEDIUS_LEFT = 691200001
+    GLUTEUS_MEDIUS_RIGHT = 691200002
+    # GLUTEUS_MINIMUS
+    GLUTEUS_MINIMUS = 691300000  # side not distinguished (either side, or both merged)
+    GLUTEUS_MINIMUS_LEFT = 691300001
+    GLUTEUS_MINIMUS_RIGHT = 691300002
+    # TENSOR_FASCIAE_LATAE
+    TENSOR_FASCIAE_LATAE = 691400000  # side not distinguished (either side, or both merged)
+    TENSOR_FASCIAE_LATAE_LEFT = 691400001
+    TENSOR_FASCIAE_LATAE_RIGHT = 691400002
+    # DEEP_HIP_ROTATORS
+    DEEP_HIP_ROTATORS = 692000000  # piriformis, gemelli, obturator internus and externus, quadratus femoris; side not distinguished (either side, or both merged)
+    DEEP_HIP_ROTATORS_LEFT = 692000001
+    DEEP_HIP_ROTATORS_RIGHT = 692000002
+    # PIRIFORMIS
+    PIRIFORMIS = 692100000  # side not distinguished (either side, or both merged)
+    PIRIFORMIS_LEFT = 692100001
+    PIRIFORMIS_RIGHT = 692100002
+    # GEMELLUS_SUPERIOR
+    GEMELLUS_SUPERIOR = 692200000  # side not distinguished (either side, or both merged)
+    GEMELLUS_SUPERIOR_LEFT = 692200001
+    GEMELLUS_SUPERIOR_RIGHT = 692200002
+    # GEMELLUS_INFERIOR
+    GEMELLUS_INFERIOR = 692300000  # side not distinguished (either side, or both merged)
+    GEMELLUS_INFERIOR_LEFT = 692300001
+    GEMELLUS_INFERIOR_RIGHT = 692300002
+    # OBTURATOR_INTERNUS
+    OBTURATOR_INTERNUS = 692400000  # side not distinguished (either side, or both merged)
+    OBTURATOR_INTERNUS_LEFT = 692400001
+    OBTURATOR_INTERNUS_RIGHT = 692400002
+    # OBTURATOR_EXTERNUS
+    OBTURATOR_EXTERNUS = 692500000  # side not distinguished (either side, or both merged)
+    OBTURATOR_EXTERNUS_LEFT = 692500001
+    OBTURATOR_EXTERNUS_RIGHT = 692500002
+    # QUADRATUS_FEMORIS
+    QUADRATUS_FEMORIS = 692600000  # side not distinguished (either side, or both merged)
+    QUADRATUS_FEMORIS_LEFT = 692600001
+    QUADRATUS_FEMORIS_RIGHT = 692600002
+    # ILIOPSOAS
+    ILIOPSOAS = 693000000  # iliacus + psoas major; side not distinguished (either side, or both merged)
+    ILIOPSOAS_LEFT = 693000001
+    ILIOPSOAS_RIGHT = 693000002
+    # ILIACUS
+    ILIACUS = 693100000  # side not distinguished (either side, or both merged)
+    ILIACUS_LEFT = 693100001
+    ILIACUS_RIGHT = 693100002
+    # PSOAS_MAJOR
+    PSOAS_MAJOR = 693200000  # side not distinguished (either side, or both merged)
+    PSOAS_MAJOR_LEFT = 693200001
+    PSOAS_MAJOR_RIGHT = 693200002
 
     ## 7xxx - leg
     # LOWER_EXTREMITY
@@ -1392,6 +1574,209 @@ class BoneLabelMap(Enum):
     FABELLA = 750000000  # sesamoid behind the lateral femoral condyle; anatomical variant, absent in many people; side not distinguished
     FABELLA_LEFT = 750000001
     FABELLA_RIGHT = 750000002
+    # 77xx - cartilage of the leg
+    # CARTILAGE_LEG
+    CARTILAGE_LEG = 770000000  # all articular cartilage of the femur, patella and tibia; side not distinguished (either side, or both merged)
+    CARTILAGE_LEG_LEFT = 770000001
+    CARTILAGE_LEG_RIGHT = 770000002
+    # FEMUR_HEAD_CARTILAGE
+    FEMUR_HEAD_CARTILAGE = 770100000  # articular cartilage of the femoral head; side not distinguished (either side, or both merged)
+    FEMUR_HEAD_CARTILAGE_LEFT = 770100001
+    FEMUR_HEAD_CARTILAGE_RIGHT = 770100002
+    # FEMUR_DISTAL_CARTILAGE
+    FEMUR_DISTAL_CARTILAGE = 770200000  # articular cartilage of the femoral condyles and trochlea; side not distinguished (either side, or both merged)
+    FEMUR_DISTAL_CARTILAGE_LEFT = 770200001
+    FEMUR_DISTAL_CARTILAGE_RIGHT = 770200002
+    # PATELLA_CARTILAGE
+    PATELLA_CARTILAGE = 770300000  # articular cartilage of the patella; side not distinguished (either side, or both merged)
+    PATELLA_CARTILAGE_LEFT = 770300001
+    PATELLA_CARTILAGE_RIGHT = 770300002
+    # TIBIA_PLATEAU_MEDIAL_CARTILAGE
+    TIBIA_PLATEAU_MEDIAL_CARTILAGE = 770400000  # articular cartilage of the medial tibial plateau; side not distinguished (either side, or both merged)
+    TIBIA_PLATEAU_MEDIAL_CARTILAGE_LEFT = 770400001
+    TIBIA_PLATEAU_MEDIAL_CARTILAGE_RIGHT = 770400002
+    # TIBIA_PLATEAU_LATERAL_CARTILAGE
+    TIBIA_PLATEAU_LATERAL_CARTILAGE = 770500000  # articular cartilage of the lateral tibial plateau; side not distinguished (either side, or both merged)
+    TIBIA_PLATEAU_LATERAL_CARTILAGE_LEFT = 770500001
+    TIBIA_PLATEAU_LATERAL_CARTILAGE_RIGHT = 770500002
+    # TIBIA_DISTAL_CARTILAGE
+    TIBIA_DISTAL_CARTILAGE = 770600000  # articular cartilage of the tibial plafond (ankle); side not distinguished (either side, or both merged)
+    TIBIA_DISTAL_CARTILAGE_LEFT = 770600001
+    TIBIA_DISTAL_CARTILAGE_RIGHT = 770600002
+    # 78xx - ligaments of the leg
+    # LIGAMENTS_LEG
+    LIGAMENTS_LEG = 780000000  # every ligament of the leg; side not distinguished (either side, or both merged)
+    LIGAMENTS_LEG_LEFT = 780000001
+    LIGAMENTS_LEG_RIGHT = 780000002
+    # ANTERIOR_CRUCIATE_LIGAMENT
+    ANTERIOR_CRUCIATE_LIGAMENT = 780100000  # ACL; side not distinguished (either side, or both merged)
+    ANTERIOR_CRUCIATE_LIGAMENT_LEFT = 780100001
+    ANTERIOR_CRUCIATE_LIGAMENT_RIGHT = 780100002
+    # POSTERIOR_CRUCIATE_LIGAMENT
+    POSTERIOR_CRUCIATE_LIGAMENT = 780200000  # PCL; side not distinguished (either side, or both merged)
+    POSTERIOR_CRUCIATE_LIGAMENT_LEFT = 780200001
+    POSTERIOR_CRUCIATE_LIGAMENT_RIGHT = 780200002
+    # MEDIAL_COLLATERAL_LIGAMENT
+    MEDIAL_COLLATERAL_LIGAMENT = 780300000  # MCL; side not distinguished (either side, or both merged)
+    MEDIAL_COLLATERAL_LIGAMENT_LEFT = 780300001
+    MEDIAL_COLLATERAL_LIGAMENT_RIGHT = 780300002
+    # LATERAL_COLLATERAL_LIGAMENT
+    LATERAL_COLLATERAL_LIGAMENT = 780400000  # LCL; side not distinguished (either side, or both merged)
+    LATERAL_COLLATERAL_LIGAMENT_LEFT = 780400001
+    LATERAL_COLLATERAL_LIGAMENT_RIGHT = 780400002
+    # 79xx - muscles of the leg; MM = group * 10 + member (0 = the whole group); MM 01 .. 09 span several groups
+    # MUSCLES_LEG
+    MUSCLES_LEG = 790000000  # every muscle of the thigh and lower leg; side not distinguished (either side, or both merged)
+    MUSCLES_LEG_LEFT = 790000001
+    MUSCLES_LEG_RIGHT = 790000002
+    # THIGH_MUSCLES
+    THIGH_MUSCLES = 790100000  # groups 791x .. 794x; side not distinguished (either side, or both merged)
+    THIGH_MUSCLES_LEFT = 790100001
+    THIGH_MUSCLES_RIGHT = 790100002
+    # LOWER_LEG_MUSCLES
+    LOWER_LEG_MUSCLES = 790200000  # groups 795x .. 798x; side not distinguished (either side, or both merged)
+    LOWER_LEG_MUSCLES_LEFT = 790200001
+    LOWER_LEG_MUSCLES_RIGHT = 790200002
+    # QUADRICEPS_FEMORIS
+    QUADRICEPS_FEMORIS = 791000000  # rectus femoris + the three vasti; side not distinguished (either side, or both merged)
+    QUADRICEPS_FEMORIS_LEFT = 791000001
+    QUADRICEPS_FEMORIS_RIGHT = 791000002
+    # RECTUS_FEMORIS
+    RECTUS_FEMORIS = 791100000  # side not distinguished (either side, or both merged)
+    RECTUS_FEMORIS_LEFT = 791100001
+    RECTUS_FEMORIS_RIGHT = 791100002
+    # VASTUS_LATERALIS
+    VASTUS_LATERALIS = 791200000  # side not distinguished (either side, or both merged)
+    VASTUS_LATERALIS_LEFT = 791200001
+    VASTUS_LATERALIS_RIGHT = 791200002
+    # VASTUS_MEDIALIS
+    VASTUS_MEDIALIS = 791300000  # side not distinguished (either side, or both merged)
+    VASTUS_MEDIALIS_LEFT = 791300001
+    VASTUS_MEDIALIS_RIGHT = 791300002
+    # VASTUS_INTERMEDIUS
+    VASTUS_INTERMEDIUS = 791400000  # side not distinguished (either side, or both merged)
+    VASTUS_INTERMEDIUS_LEFT = 791400001
+    VASTUS_INTERMEDIUS_RIGHT = 791400002
+    # THIGH_ADDUCTORS
+    THIGH_ADDUCTORS = 792000000  # adductor longus, brevis, magnus + gracilis + pectineus; side not distinguished (either side, or both merged)
+    THIGH_ADDUCTORS_LEFT = 792000001
+    THIGH_ADDUCTORS_RIGHT = 792000002
+    # ADDUCTOR_LONGUS
+    ADDUCTOR_LONGUS = 792100000  # side not distinguished (either side, or both merged)
+    ADDUCTOR_LONGUS_LEFT = 792100001
+    ADDUCTOR_LONGUS_RIGHT = 792100002
+    # ADDUCTOR_BREVIS
+    ADDUCTOR_BREVIS = 792200000  # side not distinguished (either side, or both merged)
+    ADDUCTOR_BREVIS_LEFT = 792200001
+    ADDUCTOR_BREVIS_RIGHT = 792200002
+    # ADDUCTOR_MAGNUS
+    ADDUCTOR_MAGNUS = 792300000  # side not distinguished (either side, or both merged)
+    ADDUCTOR_MAGNUS_LEFT = 792300001
+    ADDUCTOR_MAGNUS_RIGHT = 792300002
+    # GRACILIS
+    GRACILIS = 792400000  # side not distinguished (either side, or both merged)
+    GRACILIS_LEFT = 792400001
+    GRACILIS_RIGHT = 792400002
+    # PECTINEUS
+    PECTINEUS = 792500000  # side not distinguished (either side, or both merged)
+    PECTINEUS_LEFT = 792500001
+    PECTINEUS_RIGHT = 792500002
+    # HAMSTRINGS
+    HAMSTRINGS = 793000000  # biceps femoris + semitendinosus + semimembranosus; side not distinguished (either side, or both merged)
+    HAMSTRINGS_LEFT = 793000001
+    HAMSTRINGS_RIGHT = 793000002
+    # BICEPS_FEMORIS
+    BICEPS_FEMORIS = 793100000  # side not distinguished (either side, or both merged)
+    BICEPS_FEMORIS_LEFT = 793100001
+    BICEPS_FEMORIS_RIGHT = 793100002
+    BICEPS_FEMORIS_LONG_HEAD = 793132000
+    BICEPS_FEMORIS_LONG_HEAD_LEFT = 793132001
+    BICEPS_FEMORIS_LONG_HEAD_RIGHT = 793132002
+    BICEPS_FEMORIS_SHORT_HEAD = 793133000
+    BICEPS_FEMORIS_SHORT_HEAD_LEFT = 793133001
+    BICEPS_FEMORIS_SHORT_HEAD_RIGHT = 793133002
+    # SEMITENDINOSUS
+    SEMITENDINOSUS = 793200000  # side not distinguished (either side, or both merged)
+    SEMITENDINOSUS_LEFT = 793200001
+    SEMITENDINOSUS_RIGHT = 793200002
+    # SEMIMEMBRANOSUS
+    SEMIMEMBRANOSUS = 793300000  # side not distinguished (either side, or both merged)
+    SEMIMEMBRANOSUS_LEFT = 793300001
+    SEMIMEMBRANOSUS_RIGHT = 793300002
+    # SARTORIUS
+    SARTORIUS = 794000000  # a group of one muscle; side not distinguished (either side, or both merged)
+    SARTORIUS_LEFT = 794000001
+    SARTORIUS_RIGHT = 794000002
+    # ANTERIOR_LEG_MUSCLES
+    ANTERIOR_LEG_MUSCLES = 795000000  # tibialis anterior, extensor digitorum longus, extensor hallucis longus; side not distinguished (either side, or both merged)
+    ANTERIOR_LEG_MUSCLES_LEFT = 795000001
+    ANTERIOR_LEG_MUSCLES_RIGHT = 795000002
+    # TIBIALIS_ANTERIOR
+    TIBIALIS_ANTERIOR = 795100000  # side not distinguished (either side, or both merged)
+    TIBIALIS_ANTERIOR_LEFT = 795100001
+    TIBIALIS_ANTERIOR_RIGHT = 795100002
+    # EXTENSOR_DIGITORUM_LONGUS
+    EXTENSOR_DIGITORUM_LONGUS = 795200000  # side not distinguished (either side, or both merged)
+    EXTENSOR_DIGITORUM_LONGUS_LEFT = 795200001
+    EXTENSOR_DIGITORUM_LONGUS_RIGHT = 795200002
+    # EXTENSOR_HALLUCIS_LONGUS
+    EXTENSOR_HALLUCIS_LONGUS = 795300000  # side not distinguished (either side, or both merged)
+    EXTENSOR_HALLUCIS_LONGUS_LEFT = 795300001
+    EXTENSOR_HALLUCIS_LONGUS_RIGHT = 795300002
+    # FIBULAR_MUSCLES
+    FIBULAR_MUSCLES = 796000000  # the peroneus (fibularis) longus and brevis; side not distinguished (either side, or both merged)
+    FIBULAR_MUSCLES_LEFT = 796000001
+    FIBULAR_MUSCLES_RIGHT = 796000002
+    # FIBULARIS_LONGUS
+    FIBULARIS_LONGUS = 796100000  # peroneus longus; side not distinguished (either side, or both merged)
+    FIBULARIS_LONGUS_LEFT = 796100001
+    FIBULARIS_LONGUS_RIGHT = 796100002
+    # FIBULARIS_BREVIS
+    FIBULARIS_BREVIS = 796200000  # peroneus brevis; side not distinguished (either side, or both merged)
+    FIBULARIS_BREVIS_LEFT = 796200001
+    FIBULARIS_BREVIS_RIGHT = 796200002
+    # SUPERFICIAL_POSTERIOR_LEG_MUSCLES
+    SUPERFICIAL_POSTERIOR_LEG_MUSCLES = 797000000  # gastrocnemius + soleus + plantaris; side not distinguished (either side, or both merged)
+    SUPERFICIAL_POSTERIOR_LEG_MUSCLES_LEFT = 797000001
+    SUPERFICIAL_POSTERIOR_LEG_MUSCLES_RIGHT = 797000002
+    # GASTROCNEMIUS
+    GASTROCNEMIUS = 797100000  # side not distinguished (either side, or both merged)
+    GASTROCNEMIUS_LEFT = 797100001
+    GASTROCNEMIUS_RIGHT = 797100002
+    GASTROCNEMIUS_MEDIAL_HEAD = 797130000
+    GASTROCNEMIUS_MEDIAL_HEAD_LEFT = 797130001
+    GASTROCNEMIUS_MEDIAL_HEAD_RIGHT = 797130002
+    GASTROCNEMIUS_LATERAL_HEAD = 797131000
+    GASTROCNEMIUS_LATERAL_HEAD_LEFT = 797131001
+    GASTROCNEMIUS_LATERAL_HEAD_RIGHT = 797131002
+    # SOLEUS
+    SOLEUS = 797200000  # side not distinguished (either side, or both merged)
+    SOLEUS_LEFT = 797200001
+    SOLEUS_RIGHT = 797200002
+    # PLANTARIS
+    PLANTARIS = 797300000  # side not distinguished (either side, or both merged)
+    PLANTARIS_LEFT = 797300001
+    PLANTARIS_RIGHT = 797300002
+    # DEEP_POSTERIOR_LEG_MUSCLES
+    DEEP_POSTERIOR_LEG_MUSCLES = 798000000  # tibialis posterior, flexor digitorum longus, flexor hallucis longus, popliteus; side not distinguished (either side, or both merged)
+    DEEP_POSTERIOR_LEG_MUSCLES_LEFT = 798000001
+    DEEP_POSTERIOR_LEG_MUSCLES_RIGHT = 798000002
+    # TIBIALIS_POSTERIOR
+    TIBIALIS_POSTERIOR = 798100000  # side not distinguished (either side, or both merged)
+    TIBIALIS_POSTERIOR_LEFT = 798100001
+    TIBIALIS_POSTERIOR_RIGHT = 798100002
+    # FLEXOR_DIGITORUM_LONGUS
+    FLEXOR_DIGITORUM_LONGUS = 798200000  # side not distinguished (either side, or both merged)
+    FLEXOR_DIGITORUM_LONGUS_LEFT = 798200001
+    FLEXOR_DIGITORUM_LONGUS_RIGHT = 798200002
+    # FLEXOR_HALLUCIS_LONGUS
+    FLEXOR_HALLUCIS_LONGUS = 798300000  # side not distinguished (either side, or both merged)
+    FLEXOR_HALLUCIS_LONGUS_LEFT = 798300001
+    FLEXOR_HALLUCIS_LONGUS_RIGHT = 798300002
+    # POPLITEUS
+    POPLITEUS = 798400000  # side not distinguished (either side, or both merged)
+    POPLITEUS_LEFT = 798400001
+    POPLITEUS_RIGHT = 798400002
 
     ## 8xxx - foot
     # FOOT
@@ -1733,11 +2118,33 @@ class BoneLabelMap(Enum):
     SESAMOID_FOOT_1_MTP_FIBULAR = 841200000  # lateral (fibular) sesamoid under the 1st metatarsal head; side not distinguished
     SESAMOID_FOOT_1_MTP_FIBULAR_LEFT = 841200001
     SESAMOID_FOOT_1_MTP_FIBULAR_RIGHT = 841200002
+    # 87xx - cartilage of the foot
+    # CARTILAGE_FOOT
+    CARTILAGE_FOOT = 870000000  # all articular cartilage of the foot; side not distinguished (either side, or both merged)
+    CARTILAGE_FOOT_LEFT = 870000001
+    CARTILAGE_FOOT_RIGHT = 870000002
+    # TALUS_CARTILAGE
+    TALUS_CARTILAGE = 870100000  # articular cartilage of the talus; side not distinguished (either side, or both merged)
+    TALUS_CARTILAGE_LEFT = 870100001
+    TALUS_CARTILAGE_RIGHT = 870100002
 
-    ## 9xxx - whole-body aggregates
+    ## 9xxx - whole body: aggregates and tissue classes
     SKELETON = 900000000  # every bone in the image
     AXIAL_SKELETON = 900100000  # skull, auditory ossicles, hyoid, vertebral column (with sacrum and coccyx), ribs, sternum
     APPENDICULAR_SKELETON = 900200000  # upper and lower extremities, each with its girdle
+    # 91xx .. 93xx - whole-body tissue classes (body composition)
+    # SKELETAL_MUSCLE
+    SKELETAL_MUSCLE = 910000000  # all skeletal muscle tissue, not divided into muscles
+    # ADIPOSE_TISSUE
+    ADIPOSE_TISSUE = 920000000  # all fat: subcutaneous + visceral + intermuscular + other
+    # SUBCUTANEOUS_ADIPOSE_TISSUE
+    SUBCUTANEOUS_ADIPOSE_TISSUE = 920100000  # fat between the skin and the muscle fascia
+    # VISCERAL_ADIPOSE_TISSUE
+    VISCERAL_ADIPOSE_TISSUE = 920200000  # fat inside the abdominal and thoracic cavities
+    # INTERMUSCULAR_ADIPOSE_TISSUE
+    INTERMUSCULAR_ADIPOSE_TISSUE = 920300000  # fat between and within the muscles
+    # SKIN
+    SKIN = 930000000
     BONE_UNSPECIFIED = 990000000  # bone tissue not assigned to a named structure
 
     @classmethod
@@ -1746,8 +2153,24 @@ class BoneLabelMap(Enum):
 
 
 def structure_of(value: int) -> int:
-    """Which bone/group, e.g. 7100 for every femur label."""
+    """Which structure or group, e.g. 7100 for every femur label."""
     return value // 100000
+
+
+def family_of(value: int) -> int:
+    """The family digit S of the structure: 1 .. 6 bones, 7 cartilage, 8 ligaments, 9 muscles (regions 1 .. 8)."""
+    return (value // 10000000) % 10
+
+
+def kind_of(value: int) -> str:
+    """What a label is: 'bone', 'cartilage', 'ligament', 'muscle' or 'tissue' (a body-composition class);
+    'background' for 0."""
+    if value == 0:
+        return "background"
+    region, family = value // 100000000, family_of(value)
+    if region == 9:
+        return "bone" if family in (0, 9) else "tissue"
+    return {7: "cartilage", 8: "ligament", 9: "muscle"}.get(family, "bone")
 
 
 def part_of(value: int) -> int:
@@ -1766,7 +2189,7 @@ def side_of(value: int) -> int:
 
 
 bonehub_to_snomed = {  # use https://github.com/ENHANCE-PET/MOOSE/blob/main/moosez/mappings/SNOMED.py
-    BoneLabelMap.SKULL.value: {
+    LabelMap.SKULL.value: {
         "id": 118646007,
         "name": "Entire bone of head",
     },

@@ -31,10 +31,17 @@ OUTPUT_ROOT = Path(__file__).resolve().parent / "dummy_bonehub_dataset"
 class _ConvertAndRead:
     converter: str  # class name in custom_dataset_io
     source: str  # folder in PUBLIC_DATASETS
-    dataset_id: int
+    dataset_id: int  # its BoneHub ID
     subjects = 2  # MAX_SUBJECTS_FOR_TESTING per list of subjects the converter reads
+    # Datasets whose data the converted scans hold (provider ID, converter, source): converted first, so that their
+    # dataset.json is in the database. Those that only give data to other datasets write nothing else.
+    providers: tuple[tuple[int, str, str], ...] = ()
 
     def test_convert_and_read(self):
+        for dataset_id, converter, source in self.providers:
+            getattr(custom_dataset_io, converter)(PUBLIC_DATASETS / source).export_to_bonehub_format(
+                OUTPUT_ROOT, dataset_id, overwrite=True, verbose=False
+            )
         converter = getattr(custom_dataset_io, self.converter)(PUBLIC_DATASETS / self.source)
         converter.export_to_bonehub_format(OUTPUT_ROOT, self.dataset_id, overwrite=True, verbose=False)
 
@@ -42,59 +49,88 @@ class _ConvertAndRead:
         self.assertEqual(len(dataset), self.subjects)
         self.assertEqual([s.id for s in dataset.subjects()], list(range(1, self.subjects + 1)))
         for scan in dataset.scans():
-            self.assertIsNotNone(scan.image_path, scan.key)
-            self.assertIsNotNone(scan.license, scan.key)
-        problems = [p for p in validate(OUTPUT_ROOT) if dataset.path.name in p]
+            if scan.image_path is not None:
+                self.assertIsNotNone(scan.license("image"), scan.key)
+            self.assertTrue(scan.provider_ids, scan.key)
+        names = [dataset.path.name] + [f"ds-{dataset_id:04d}" for dataset_id, _, _ in self.providers]
+        problems = [p for p in validate(OUTPUT_ROOT) if any(name in p for name in names)]
         self.assertEqual(problems, [])
 
 
 class TestBoneDat(_ConvertAndRead, unittest.TestCase):
-    converter, source, dataset_id = "BoneDat", "0124 BoneDat/BoneDat", 1
+    converter, source, dataset_id = "BoneDat", "0124 BoneDat/BoneDat", 124
 
 
 class TestKiTS2023(_ConvertAndRead, unittest.TestCase):
-    converter, source, dataset_id = "KiTS2023", "0073 kits23", 2
+    converter, source, dataset_id = "KiTS2023", "0073 kits23", 73
 
 
 class TestSpineMetsCTSeg(_ConvertAndRead, unittest.TestCase):
-    converter, source, dataset_id = "SpineMetsCTSeg", "0019 TCIA Spine-Mets-CT-SEG", 3
+    converter, source, dataset_id = "SpineMetsCTSeg", "0019 TCIA Spine-Mets-CT-SEG", 19
 
 
 class TestEnhancePET(_ConvertAndRead, unittest.TestCase):
-    converter, source, dataset_id = "EnhancePET", "0134 enhance-pet-1_6k", 4
+    converter, source, dataset_id = "EnhancePET", "0134 enhance-pet-1_6k", 134
+    providers = (
+        (18, "Atlas", "0018 Atlas dataset"),
+        (40, "FDGPETCTLesions", "0040 TCIA FDG-PET-CT-Lesions"),
+        (75, "PSMAFDGPETCTLesions", "0075 psma-fdg-pet-ct-lesions"),
+    )
 
 
-class TestVSDLowerExtremitiesSeg(_ConvertAndRead, unittest.TestCase):
-    converter, source, dataset_id = "VSDLowerExtremitiesSeg", "0180 vsd-lower-extremities-seg", 5
+class TestPSMAFDGPETCTLesions(_ConvertAndRead, unittest.TestCase):
+    converter, source, dataset_id = "PSMAFDGPETCTLesions", "0075 psma-fdg-pet-ct-lesions", 75
 
 
 class TestTotalSegmentatorCT(_ConvertAndRead, unittest.TestCase):
-    converter, source, dataset_id = "TotalSegmentatorCT", "0027 Totalsegmentator/v3.0.0", 6
+    converter, source, dataset_id = "TotalSegmentatorCT", "0027 Totalsegmentator/v3.0.0", 27
+
+
+class TestTotalSegmentatorMRI(_ConvertAndRead, unittest.TestCase):
+    converter, source, dataset_id = "TotalSegmentatorMRI", "0028 TotalsegmentatorMRI/v3.0.0", 28
+
+
+class TestHealthyTotalBodyCTs(_ConvertAndRead, unittest.TestCase):
+    converter, source, dataset_id = "HealthyTotalBodyCTs", "0029 TCIA Healthy-Total-Body-CTs", 29
+
+
+class TestQuadraHC(_ConvertAndRead, unittest.TestCase):
+    converter, source, dataset_id = "QuadraHC", "0163 QUADRA_HC", 163
+
+
+class TestOpenSkeleton(_ConvertAndRead, unittest.TestCase):
+    converter, source, dataset_id = "OpenSkeleton", "0176 OpenSkeleton", 176
 
 
 class TestCTPelvic1K(_ConvertAndRead, unittest.TestCase):
-    converter, source, dataset_id = "CTPelvic1K", "0044 CTPelvic1K", 7
+    converter, source, dataset_id = "CTPelvic1K", "0044 CTPelvic1K", 44
 
 
 class TestPENGWIN(_ConvertAndRead, unittest.TestCase):
-    converter, source, dataset_id = "PENGWIN", "0106 PENGWIN", 8
+    converter, source, dataset_id = "PENGWIN", "0106 PENGWIN", 106
 
 
 class TestCTPEL(_ConvertAndRead, unittest.TestCase):
-    converter, source, dataset_id = "CTPEL", "0138 ctpel", 9
+    converter, source, dataset_id = "CTPEL", "0138 ctpel", 138
 
 
 class TestSynthRAD2023(_ConvertAndRead, unittest.TestCase):
-    converter, source, dataset_id = "SynthRAD2023", "0006 SynthRAD2023", 10
+    converter, source, dataset_id = "SynthRAD2023", "0006 SynthRAD2023", 6
     subjects = 6  # 2 each of Task1 train (CT + MR), Task1 validation (MR) and Task2 (CT)
 
 
 class TestVSDFullBody(_ConvertAndRead, unittest.TestCase):
-    converter, source, dataset_id = "VSDFullBody", "0071 VSDFullBody", 11
+    converter, source, dataset_id = "VSDFullBody", "0071 VSDFullBody", 71
+    providers = ((180, "VSDLowerExtremitiesSeg", "0180 vsd-lower-extremities-seg"),)
+
+
+class TestVisibleHuman3DModels(_ConvertAndRead, unittest.TestCase):
+    converter, source, dataset_id = "VisibleHuman3DModels", "0153 visible-human-3d-models", 153
+    providers = ((109, "VisibleHumanCOB", "0109 VisibleHuman"),)
 
 
 class TestACRIN6664(_ConvertAndRead, unittest.TestCase):
-    converter, source, dataset_id = "ACRIN6664", "0070 TCIA CT COLONOGRAPHY ACRIN 6664", 12
+    converter, source, dataset_id = "ACRIN6664", "0070 TCIA CT COLONOGRAPHY ACRIN 6664", 70
 
 
 if __name__ == "__main__":

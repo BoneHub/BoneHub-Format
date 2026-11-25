@@ -35,6 +35,8 @@ converter = [
     "openpyxl",
     "tqdm",
     "pyarrow",
+    "h5py",  # MATLAB 7.3 files (e.g. OpenSkeleton)
+    "scipy",  # older MATLAB files
 ]
 all = [
     "bonehub-format[converter]",

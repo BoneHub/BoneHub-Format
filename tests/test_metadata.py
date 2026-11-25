@@ -11,21 +11,38 @@ from bonehub_format import (
     SCHEMA_VERSION,
     DatasetInfo,
     Database,
+    Licenses,
+    ProviderInfo,
     ScanInfo,
     SubjectInfo,
+    SubsetInfo,
+    file_license,
     is_compatible_schema_version,
     layout,
 )
 
 
 class TestDatasetInfo(unittest.TestCase):
-    def test_license(self):
-        self.assertEqual(DatasetInfo(name="A", license="CC-BY-NC-SA-4.0").license, "CC-BY-NC-SA-4.0")
-        self.assertEqual(DatasetInfo(name="A", license=RESTRICTED).license, "restricted")
+    def test_license_per_kind(self):
+        info = DatasetInfo(name="A", license=Licenses(image=RESTRICTED, segmentation="CC-BY-4.0"))
+        self.assertEqual((info.license_of("image"), info.license_of("segmentation"), info.license_of("mesh")), ("restricted", "CC-BY-4.0", None))
+        self.assertEqual(Licenses.all("MIT").to_dict(), {"image": "MIT", "segmentation": "MIT", "mesh": "MIT", "nurbs": "MIT"})
         for bad in ("CC BY 4.0", "cc-by-4.0", "Other", ""):
             with self.subTest(license=bad), self.assertRaises(ValidationError):
-                DatasetInfo(name="A", license=bad)
+                Licenses(image=bad)
+        with self.assertRaises(ValidationError):
+            DatasetInfo(name="A", license="CC-BY-4.0")  # a license is given per kind
         self.assertIn("CC-BY-NC-3.0", LICENSES)
+
+    def test_subset_license_overrides_the_dataset(self):
+        info = DatasetInfo(
+            name="CADS",
+            license=Licenses.all("CC-BY-4.0"),
+            subsets={"0004_lits": SubsetInfo(name="LiTS", license=Licenses(image="CC-BY-NC-SA-4.0"))},
+        )
+        self.assertEqual(info.license_of("image", "0004_lits"), "CC-BY-NC-SA-4.0")
+        self.assertEqual(info.license_of("segmentation", "0004_lits"), "CC-BY-4.0")  # the subset gives none
+        self.assertEqual(info.license_of("image", "unknown"), "CC-BY-4.0")
 
     def test_annotated_labels_are_checked_and_sorted(self):
         info = DatasetInfo(name="A", annotated_labels=["FEMUR_RIGHT", "SKULL", "FEMUR_LEFT", "SKULL"])
@@ -44,42 +61,81 @@ class TestDatasetInfo(unittest.TestCase):
 class TestSubjectInfo(unittest.TestCase):
     def test_gender(self):
         for value in ("M", "F", "O", None):
-            self.assertEqual(SubjectInfo(source_subject_id="1", gender=value).gender, value)
+            self.assertEqual(SubjectInfo(sources={"ds-0001": "1"}, gender=value).gender, value)
         for bad in ("", "male", "m"):
             with self.subTest(gender=bad), self.assertRaises(ValidationError):
-                SubjectInfo(source_subject_id="1", gender=bad)
+                SubjectInfo(sources={"ds-0001": "1"}, gender=bad)
+
+    def test_sources_are_keyed_and_sorted_by_dataset(self):
+        info = SubjectInfo(sources={"ds-0134": "0001", "ds-0040": "PETCT_1"})
+        self.assertEqual(list(info.sources), ["ds-0040", "ds-0134"])
+        self.assertEqual(info.source_subject_id(134), "0001")
+        self.assertIsNone(info.source_subject_id(18))
+        for bad in ("40", "ds-40", "dataset-0040"):
+            with self.subTest(key=bad), self.assertRaises(ValidationError):
+                SubjectInfo(sources={bad: "1"})
 
 
 class TestScanInfo(unittest.TestCase):
     def test_origins(self):
         good = ["source", "manual", "model:TotalSegmentator@2.4.0", "derived:mesh2nurbs-rhino3d@1.0"]
         for origin in good:
-            ScanInfo(source_scan_id="a", mesh={"FEMUR_LEFT": origin})
+            ProviderInfo(source_scan_id="a", mesh={"FEMUR_LEFT": origin})
         for bad in ("Source", "model:TotalSegmentator", "derived:@1.0", "model:a b@1", 1):
             with self.subTest(origin=bad), self.assertRaises(ValidationError):
-                ScanInfo(source_scan_id="a", segmentation={"FEMUR_LEFT": bad})
+                ProviderInfo(source_scan_id="a", segmentation={"FEMUR_LEFT": bad})
 
     def test_labels_are_checked_and_kept_in_label_map_order(self):
-        scan = ScanInfo(source_scan_id="a")
-        scan.set_labels("segmentation", ["TIBIA_LEFT", "FEMUR_LEFT"], "source")
-        self.assertEqual(scan.labels("segmentation"), ["FEMUR_LEFT", "TIBIA_LEFT"])
-        scan.set_labels("nurbs", ["FEMUR_LEFT"], {"FEMUR_LEFT": "manual"})
-        self.assertEqual(scan.nurbs, {"FEMUR_LEFT": "manual"})
-        scan.set_labels("mesh", [], "source")
-        self.assertIsNone(scan.mesh)
+        provider = ProviderInfo(source_scan_id="a")
+        provider.set_labels("segmentation", ["TIBIA_LEFT", "FEMUR_LEFT"], "source")
+        self.assertEqual(provider.labels("segmentation"), ["FEMUR_LEFT", "TIBIA_LEFT"])
+        provider.set_labels("nurbs", ["FEMUR_LEFT"], {"FEMUR_LEFT": "manual"})
+        self.assertEqual(provider.nurbs, {"FEMUR_LEFT": "manual"})
+        provider.set_labels("mesh", [], "source")
+        self.assertIsNone(provider.mesh)
         with self.assertRaises(ValueError):
-            scan.set_labels("segmentation", ["NOT_A_BONE"], "source")
+            provider.set_labels("segmentation", ["NOT_A_BONE"], "source")
         with self.assertRaises(ValueError):
-            scan.set_labels("mesh", ["FEMUR_LEFT"], {})  # no origin for the label
+            provider.set_labels("mesh", ["FEMUR_LEFT"], {})  # no origin for the label
         with self.assertRaises(ValueError):
-            scan.labels("landmarks")
+            provider.labels("landmarks")
+
+    def test_labels_of_all_providers(self):
+        scan = ScanInfo(
+            image="ds-0040",
+            providers={
+                "ds-0134": ProviderInfo(source_scan_id="0001", segmentation={"FEMUR_LEFT": "source"}),
+                "ds-0040": ProviderInfo(source_scan_id="PETCT_1"),
+                "ds-0018": ProviderInfo(source_scan_id="AutoPET_1", segmentation={"SKULL": "source", "FEMUR_LEFT": "source"}),
+            },
+        )
+        self.assertEqual(list(scan.providers), ["ds-0018", "ds-0040", "ds-0134"])
+        self.assertEqual(scan.provider_ids, [18, 40, 134])
+        self.assertEqual(scan.image_provider, 40)
+        self.assertEqual(scan.labels("segmentation"), ["SKULL", "FEMUR_LEFT"])
+        self.assertEqual(scan.labels("segmentation", 134), ["FEMUR_LEFT"])
+        self.assertEqual(scan.labels("segmentation", 27), [])
+        self.assertEqual(scan.source_scan_id(), "PETCT_1")
+        with self.assertRaises(ValidationError):  # the image must come from a provider
+            ScanInfo(image="ds-0027", providers={"ds-0040": ProviderInfo(source_scan_id="a")})
+
+    def test_file_license(self):
+        dataset = DatasetInfo(name="A", license=Licenses(image=RESTRICTED, segmentation="CC-BY-4.0"))
+        scan = ScanInfo(
+            image="ds-0001",
+            providers={"ds-0001": ProviderInfo(source_scan_id="a", license=Licenses(segmentation="CC-BY-NC-4.0"))},
+        )
+        self.assertEqual(file_license(scan, "image", 1, dataset), RESTRICTED)
+        self.assertEqual(file_license(scan, "segmentation", 1, dataset), "CC-BY-NC-4.0")  # the scan's own
+        self.assertIsNone(file_license(scan, "segmentation", 2, dataset))  # not a provider
+        self.assertIsNone(file_license(scan, "image", 1, None))  # provider's dataset.json not known
 
     def test_other_fields(self):
-        scan = ScanInfo(source_scan_id="a", weight=81, registered_to="scan-02", postmortem=True, license="CC-BY-NC-3.0")
-        self.assertEqual(scan.to_dict(), {"source_scan_id": "a", "weight": 81.0, "postmortem": True, "registered_to": "scan-02", "license": "CC-BY-NC-3.0"})
-        for field, bad in (("registered_to", "2"), ("age", -1), ("weight", 0), ("postmortem", "yes"), ("license", "MIT-ish")):
+        scan = ScanInfo(weight=81, registered_to="scan-02", postmortem=True)
+        self.assertEqual(scan.to_dict(), {"weight": 81.0, "postmortem": True, "registered_to": "scan-02", "providers": {}})
+        for field, bad in (("registered_to", "2"), ("age", -1), ("weight", 0), ("postmortem", "yes"), ("image", "40")):
             with self.subTest(field=field), self.assertRaises(ValidationError):
-                ScanInfo(source_scan_id="a", **{field: bad})
+                ScanInfo(**{field: bad})
 
 
 class TestSchemaVersion(unittest.TestCase):
@@ -114,7 +170,14 @@ class TestLayout(unittest.TestCase):
         for make, too_big in ((layout.dataset_dir_name, 10_000), (layout.subject_dir_name, 1_000_000)):
             with self.assertRaises(ValueError):
                 make(too_big)
-        self.assertEqual(layout.model_zip(Path("x"), "nurbs"), Path("x") / "nurbs.zip")
+        self.assertEqual(layout.model_zip(Path("x"), "nurbs", 40), Path("x") / "nurbs.ds-0040.zip")
+        self.assertEqual(layout.model_folder(Path("x"), "mesh", 40), Path("x") / "mesh.ds-0040")
+        self.assertEqual(layout.segmentation_file(Path("x"), 18), Path("x") / "segmentation.ds-0018.seg.nrrd")
+        self.assertEqual(layout.parse_scan_entry("mesh.ds-0040.zip"), ("mesh", 40, True))
+        self.assertEqual(layout.parse_scan_entry("nurbs.ds-0153"), ("nurbs", 153, False))
+        self.assertEqual(layout.parse_scan_entry("segmentation.ds-0018.seg.nrrd"), ("segmentation", 18, False))
+        for other in ("image.nii.gz", "mesh.zip", "segmentation.seg.nrrd", "mesh.ds-40"):
+            self.assertIsNone(layout.parse_scan_entry(other))
 
 
 if __name__ == "__main__":

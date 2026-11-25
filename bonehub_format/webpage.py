@@ -1,8 +1,9 @@
 """The database's webpage, a static site for GitHub Pages, in <database>/github-webpage/.
 
-build_webpage() copies the page from the package's template, fills in the database's name and links, and writes its
-data (data.js) from the index. github-webpage/README.md says how to publish the page, and
-github-webpage/update_data.py rewrites data.js after the index changes, without this package.
+build_webpage() copies the page from the package's template, fills in the database's name and links, writes
+structures.json (which groups of the body each label covers, see body_map.py), and writes the page's data (data.js)
+from the index. github-webpage/README.md says how to publish the page, and github-webpage/update_data.py rewrites
+data.js after the index changes, without this package.
 
 Requires pyarrow: pip install "bonehub-format[converter]".
 """
@@ -10,16 +11,29 @@ Requires pyarrow: pip install "bonehub-format[converter]".
 from __future__ import annotations
 
 import html
+import json
 import runpy
 import shutil
 from importlib import resources
 from pathlib import Path
 
 from . import layout
+from .body_map import structures_data
 from .registry import REGISTRY_PAGE_URL
 
 TEMPLATE_FOLDER = "webpage_template"  # in the package
-TEMPLATE_FILES = ("index.html", "app.js", "overview.js", "styles.css", "logo.png", ".nojekyll", "update_data.py", "README.md")
+TEMPLATE_FILES = (
+    "index.html",
+    "app.js",
+    "overview.js",
+    "coverage.js",
+    "datasets.js",
+    "styles.css",
+    "logo.png",
+    ".nojekyll",
+    "update_data.py",
+    "README.md",
+)
 
 _GITHUB_ICON = (
     '<svg width="48" height="48" viewBox="0 0 16 16" fill="white" xmlns="http://www.w3.org/2000/svg"><path d="M8 0C3.58 0 '
@@ -95,6 +109,7 @@ def build_webpage(
         "{{CONTACT}}": contact,
         "{{ANALYTICS}}": analytics_html or "",
         "{{HF_URL}}": hf_url or "(not published yet)",
+        "{{HF_REPO_ID}}": html.escape(hf_repo_id or "<organisation>/<database>"),
         "{{REGISTRY_PAGE_URL}}": REGISTRY_PAGE_URL,
     }
     for name in ("index.html", "README.md", "update_data.py"):
@@ -103,6 +118,7 @@ def build_webpage(
             text = text.replace(placeholder, value)
         (target / name).write_text(text, encoding="utf-8", newline="\n")
 
+    (target / "structures.json").write_text(json.dumps(structures_data(), ensure_ascii=False), encoding="utf-8", newline="\n")
     update = runpy.run_path(str(target / "update_data.py"), run_name="bonehub_update_data")
     update["write_data_js"](index_dir, target / "data.js")
     return target

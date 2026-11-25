@@ -1,7 +1,7 @@
 """Reading and writing BoneHub segmentation masks (`.seg.nrrd`).
 
 Voxels hold per-file segment numbers (1, 2, 3 ...; uint8, or uint16 above 255 segments), as
-in 3D Slicer's own segmentation files. The header maps each number to its BoneLabelMap
+in 3D Slicer's own segmentation files. The header maps each number to its LabelMap
 label and records the segment's colour and bounding box.
 
 Reading and writing masks requires numpy and SimpleITK: pip install "bonehub-format[io]".
@@ -14,13 +14,13 @@ import colorsys
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from .labelmap import BoneLabelMap
+from .labelmap import LabelMap
+from .layout import SEGMENTATION_SUFFIX
 
 if TYPE_CHECKING:
     import numpy as np
     import SimpleITK as sitk
 
-SEGMENTATION_SUFFIX = ".seg.nrrd"
 
 # Slices processed at a time when relabelling, to limit memory.
 _CHUNK_SLICES = 32
@@ -64,9 +64,9 @@ def write_segmentation(
     reference_image: sitk.Image,
     output_path: Path,
 ) -> list[str]:
-    """Write a mask given as BoneLabelMap values.
+    """Write a mask given as LabelMap values.
 
-    array: voxel array of BoneLabelMap values, 0 for background.
+    array: voxel array of LabelMap values, 0 for background.
     reference_image: image whose geometry (spacing, origin, direction) the mask shares.
     output_path: destination, ending in `.seg.nrrd`.
     Returns the names of the labels present in the mask.
@@ -92,7 +92,7 @@ def write_indexed_segmentation(
     """Write a mask whose voxels already hold segment numbers.
 
     numbers: voxel array of segment numbers: 0 for background, k for bonehub_values[k - 1].
-    bonehub_values: the BoneLabelMap value of each segment number, without repeats.
+    bonehub_values: the LabelMap value of each segment number, without repeats.
     The other arguments are as for write_segmentation. Numbers absent from the mask are
     left out of the header.
     """
@@ -102,7 +102,7 @@ def write_indexed_segmentation(
     if not output_path.name.endswith(SEGMENTATION_SUFFIX):
         raise ValueError(f"A BoneHub segmentation file must end in '{SEGMENTATION_SUFFIX}': {output_path}")
     if len(set(bonehub_values)) != len(bonehub_values):
-        raise ValueError("Each BoneLabelMap value may have only one segment number.")
+        raise ValueError("Each LabelMap value may have only one segment number.")
 
     image = sitk.GetImageFromArray(np.asarray(numbers, dtype=segment_number_dtype(len(bonehub_values))))
     image.CopyInformation(reference_image)
@@ -114,7 +114,7 @@ def write_indexed_segmentation(
     present = []
     for i, number in enumerate(sorted(int(n) for n in boxes.GetLabels())):
         value = int(bonehub_values[number - 1])
-        label = BoneLabelMap(value)
+        label = LabelMap(value)
         x, y, z, sx, sy, sz = boxes.GetBoundingBox(number)
         r, g, b = _segment_color(value)
         image.SetMetaData(f"Segment{i}_ID", label.name)
@@ -147,7 +147,7 @@ def _tags(reader_or_image, i: int) -> dict[str, str]:
 
 
 def read_segmentation(path: Path) -> sitk.Image:
-    """Read a mask as an int32 image of BoneLabelMap values (0 for background)."""
+    """Read a mask as an int32 image of LabelMap values (0 for background)."""
     np, sitk = _io_modules()
     image = sitk.ReadImage(str(path))
 
@@ -158,8 +158,8 @@ def read_segmentation(path: Path) -> sitk.Image:
         tags, name = _tags(image, i), image.GetMetaData(f"Segment{i}_Name")
         if "BoneHubValue" in tags:
             value_of[number] = int(tags["BoneHubValue"])
-        elif name in BoneLabelMap.__members__:  # segment added in Slicer, without BoneHub tags
-            value_of[number] = BoneLabelMap[name].value
+        elif name in LabelMap.__members__:  # segment added in Slicer, without BoneHub tags
+            value_of[number] = LabelMap[name].value
         else:
             raise ValueError(f"Segment '{name}' in '{path}' has no BoneHub label.")
         i += 1

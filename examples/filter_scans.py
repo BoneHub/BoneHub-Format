@@ -28,4 +28,4 @@ if __name__ == "__main__":
     selected = selected[[not (parents[dataset_id] & chosen) for dataset_id in selected["dataset_id"]]]
     selected = selected.drop_duplicates(["dataset_id", "subject_id"])
     print(f"Found {len(selected)} people with a complete L4 or L5 vertebra and tibia segmented.")
-    print(selected[["scan", "modality", "age", "gender", "license"]].to_string(index=False))
+    print(selected[["scan", "modality", "age", "gender", "image_license"]].to_string(index=False))

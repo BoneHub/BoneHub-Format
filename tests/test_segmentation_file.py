@@ -4,7 +4,7 @@ import unittest
 from pathlib import Path
 
 from bonehub_format import (
-    BoneLabelMap,
+    LabelMap,
     read_segmentation,
     read_segmentation_labels,
     read_segmentation_segments,
@@ -24,8 +24,8 @@ class TestSegmentationFile(unittest.TestCase):
         self.np, self.sitk = np, sitk
         self.tmp = Path(tempfile.mkdtemp())
         self.array = np.zeros((4, 8, 8), dtype=np.int32)
-        self.array[0:2] = BoneLabelMap.FEMUR_LEFT.value
-        self.array[2:4, :4] = BoneLabelMap.FEMUR_PROXIMAL_CORTICAL_LEFT.value
+        self.array[0:2] = LabelMap.FEMUR_LEFT.value
+        self.array[2:4, :4] = LabelMap.FEMUR_PROXIMAL_CORTICAL_LEFT.value
         self.reference = sitk.GetImageFromArray(np.zeros(self.array.shape, dtype=np.int16))
 
     def test_round_trip(self):
@@ -54,7 +54,7 @@ class TestSegmentationFile(unittest.TestCase):
         self.assertEqual(extents, {"FEMUR_LEFT": "0 7 0 7 0 1", "FEMUR_PROXIMAL_CORTICAL_LEFT": "0 7 0 3 2 3"})
 
     def test_more_than_255_segments_use_uint16(self):
-        values = [label.value for label in BoneLabelMap if label.value][:300]
+        values = [label.value for label in LabelMap if label.value][:300]
         array = self.np.zeros((1, 20, 20), dtype=self.np.int32)
         array.flat[: len(values)] = values
         path = self.tmp / "many.seg.nrrd"
@@ -65,7 +65,7 @@ class TestSegmentationFile(unittest.TestCase):
     def test_indexed_writer_skips_numbers_not_in_the_mask(self):
         numbers = self.np.zeros((2, 4, 4), dtype=self.np.uint8)
         numbers[0] = 2
-        values = [BoneLabelMap.TIBIA_LEFT.value, BoneLabelMap.FEMUR_LEFT.value]
+        values = [LabelMap.TIBIA_LEFT.value, LabelMap.FEMUR_LEFT.value]
         path = self.tmp / "indexed.seg.nrrd"
         written = write_indexed_segmentation(numbers, values, self.sitk.GetImageFromArray(numbers), path)
         self.assertEqual(written, ["FEMUR_LEFT"])
@@ -86,7 +86,7 @@ class TestSegmentationFile(unittest.TestCase):
         self.sitk.WriteImage(image, str(path))
         self.assertEqual(read_segmentation_labels(path), ["FEMUR_LEFT"])
         bonehub = self.sitk.GetArrayFromImage(read_segmentation(path))
-        self.assertEqual(set(self.np.unique(bonehub)), {0, BoneLabelMap.FEMUR_LEFT.value})
+        self.assertEqual(set(self.np.unique(bonehub)), {0, LabelMap.FEMUR_LEFT.value})
 
 
 if __name__ == "__main__":
