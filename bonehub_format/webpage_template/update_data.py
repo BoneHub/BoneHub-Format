@@ -140,7 +140,6 @@ def _dataset_info(datasets: list[dict], scans: list[dict], labels: list[dict]) -
                 "description": row.get("description"),
                 "url": row.get("url"),
                 "paper": row.get("paper"),
-                "citation": row.get("citation"),
                 "country": row.get("country"),
                 "year": row.get("release_date"),
                 "version": row.get("version"),

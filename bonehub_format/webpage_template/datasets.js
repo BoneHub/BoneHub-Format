@@ -167,12 +167,6 @@
             });
             actions.appendChild(show);
         }
-        if (card.citation) {
-            const cite = el('button', 'btn-secondary btn-small', 'Copy BibTeX');
-            cite.type = 'button';
-            cite.addEventListener('click', () => copyText(card.citation, cite));
-            actions.appendChild(cite);
-        }
         if (card.url) actions.appendChild(linkButton(card.url, 'Source'));
         if (card.paper) actions.appendChild(linkButton(card.paper.startsWith('http') ? card.paper : `https://doi.org/${card.paper}`, 'Paper'));
         actions.appendChild(linkButton(card.registry, 'Registry'));

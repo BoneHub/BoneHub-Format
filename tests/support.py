@@ -92,6 +92,16 @@ def read_dataset_with_contributions(dataset_root: Path) -> list[SubjectSource]:
     return subjects
 
 
+def read_dataset_with_moved_contribution(dataset_root: Path) -> list[SubjectSource]:
+    """read_dataset_with_contributions, but the provider's labels are labels_moved.nii.gz, which the test writes on
+    another grid (shifted, flipped ...)."""
+    subjects = read_dataset_with_contributions(dataset_root)
+    for subject in subjects:
+        for scan in subject.scans:
+            scan.contributions[0].segmentation_paths = [path.with_name("labels_moved.nii.gz") for path in scan.segmentation_paths]
+    return subjects
+
+
 def export_provider_segmentation(scan: Contribution, output_path: Path) -> None:
     export_nii_segmentation(scan.segmentation_paths, output_path, [PROVIDER_MAPPING])
 

@@ -45,6 +45,7 @@ from concurrent.futures.process import BrokenProcessPool
 from datetime import datetime
 from pathlib import Path
 
+import numpy as np
 import SimpleITK as sitk
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from tqdm import tqdm
@@ -54,7 +55,7 @@ from ._version import SCHEMA_VERSION, is_compatible_schema_version
 from .archive import model_folder_files, pack_scan
 from .export import export_image as export_image_file
 from .metadata import DatasetInfo, Licenses, ProviderInfo, ScanInfo, SubjectInfo, check_origin
-from .segmentation_file import read_segmentation_labels
+from .segmentation_file import read_segment_numbers, read_segmentation_labels, write_indexed_segmentation
 
 # Each worker process holds whole volumes in memory, so keep the default modest.
 DEFAULT_MAX_WORKERS = 8
@@ -235,6 +236,82 @@ def _origin(spec: Origin, label: str, kind: str) -> str:
     if label not in spec:
         raise ValueError(f"No {kind} origin given for {label}.")
     return spec[label]
+
+
+def _grid(path: Path) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    reader = sitk.ImageFileReader()
+    reader.SetFileName(str(path))
+    reader.ReadImageInformation()
+    return (
+        np.array(reader.GetSize()),
+        np.array(reader.GetSpacing()),
+        np.array(reader.GetOrigin()),
+        np.reshape(reader.GetDirection(), (3, 3)),
+    )
+
+
+def _voxel_map(image_grid: tuple, other_grid: tuple) -> np.ndarray | None:
+    """Where the voxels of another grid lie on the image grid, if both hold the same voxels: the matrix A and offset
+    t of image index = A @ index + t, with A a signed permutation (the same axes, maybe flipped or in another order)
+    and every voxel within half a voxel of its image voxel (header rounding). None if the grids differ otherwise."""
+    size, spacing, origin, direction = image_grid
+    other_size, other_spacing, other_origin, other_direction = other_grid
+    to_index = np.linalg.inv(direction * spacing)  # direction * spacing scales the columns: index -> physical
+    matrix = to_index @ (other_direction * other_spacing)
+    axes = np.round(matrix)
+    if np.abs(matrix - axes).max() > 1e-3 or not np.array_equal(np.abs(axes) @ np.abs(axes).T, np.eye(3)):
+        return None
+    offset = to_index @ (other_origin - origin)
+    if np.abs(offset - np.round(offset)).max() >= 0.5:
+        return None
+    # every voxel of the other grid lands on a voxel of the image, and the other way round
+    corner = axes @ (other_size - 1)
+    lands = np.round(offset) + np.minimum(corner, 0), np.round(offset) + np.maximum(corner, 0)
+    if not (np.array_equal(lands[0], np.zeros(3)) and np.array_equal(lands[1], size - 1)):
+        return None
+    return np.column_stack([matrix, offset])
+
+
+def _align_to_image(scan_path: Path, providers: dict) -> None:
+    """Put each provider's segmentation on the grid of the scan's image, so that the data of all datasets describe the
+    same voxels. A segmentation that holds the image's voxels in another order (a flipped axis) or with a slightly
+    different origin (less than half a voxel: header rounding) is written again on the image grid; nearest-neighbour
+    resampling then moves each voxel to its image voxel without changing any label. Raise if a segmentation is on
+    another grid."""
+    image = scan_path / layout.IMAGE_FILE
+    if not image.is_file():
+        return
+    image_grid = _grid(image)
+    for key in providers:
+        path = layout.segmentation_file(scan_path, layout.parse_provider_key(key))
+        if not path.is_file():
+            continue
+        other_grid = _grid(path)
+        voxel_map = _voxel_map(image_grid, other_grid)
+        if voxel_map is None:
+            raise ValueError(
+                f"The segmentation of {key} in '{scan_path}' is not on the grid of the scan's image: size, spacing, "
+                f"origin and direction are {tuple(v.ravel().tolist() for v in other_grid)} instead of "
+                f"{tuple(v.ravel().tolist() for v in image_grid)}."
+            )
+        if np.abs(voxel_map - np.column_stack([np.eye(3), np.zeros(3)])).max() < 1e-3:
+            continue  # the same grid, to within 1/1000 of a voxel
+        size, spacing, origin, direction = image_grid
+        numbers, value_of = read_segment_numbers(path)
+        aligned = sitk.Resample(
+            numbers,
+            [int(v) for v in size],
+            sitk.Transform(),
+            sitk.sitkNearestNeighbor,
+            origin.tolist(),
+            spacing.tolist(),
+            direction.ravel().tolist(),
+            0,
+            numbers.GetPixelID(),
+        )
+        # numbers without a segment in the header are absent from the mask: a placeholder keeps the others in place
+        bonehub_values = [value_of.get(number, -number) for number in range(1, max(value_of, default=0) + 1)]
+        write_indexed_segmentation(sitk.GetArrayViewFromImage(aligned), bonehub_values, aligned, path)
 
 
 def _exit_when_parent_dies() -> None:
@@ -514,6 +591,7 @@ class DatasetConverter:
             if data.image_path is not None:
                 info.image = layout.provider_key(dataset_id)
         info.providers = providers
+        _align_to_image(scan_path, providers)
         if scan.registered_to is not None:
             info.registered_to = scan_names[scan.registered_to]
         pack_scan(scan_path)

@@ -67,7 +67,13 @@ the subject lives in one dataset folder, its **home** (usually the dataset whose
 that gave the scan data is one of its **providers**, named by its provider key `ds-NNNN`. Each file that holds labels
 is named after its provider, the home included, so two datasets' segmentations of the same bone are both kept. The
 image comes from one provider. A dataset whose every subject lives elsewhere keeps only its `dataset.json`, which its
-files' licenses and citation are read from.
+files' licenses are read from.
+
+A database aims at many different people, not at many images of the same person: of the contrast phases,
+reconstructions, follow-ups or test/retest scans a source has of one person, **one scan is converted**, the one with
+the most labelled data, then the one covering most of the body, with the thinnest slices, the earliest
+(`bonehub_format.selection`). A subject has a second scan only where it holds other data that cannot be put on
+the first scan's grid, such as another dataset's meshes made in another frame.
 
 ### Dataset IDs
 
@@ -83,7 +89,7 @@ BoneHub ID 27, is `ds-0027` in every database that holds it. The registry is the
 The metadata files hold only what cannot be read from the data files. Image size and spacing, label counts and which
 structures touch the image border are computed into the index.
 
-**dataset.json**: `name`, `description`, `url`, `paper`, `citation` (BibTeX), `country`, `release_date`, `version` (of
+**dataset.json**: `name`, `description`, `url`, `paper`, `country`, `release_date`, `version` (of
 the source), `license` (per kind of data), `subsets`, `derived_from`, `annotated_labels`, `remarks`, `schema_version`.
 
 **subject.json**: `sources` (the subject's ID in each provider dataset, the home among them), `gender` (`M`, `F`, `O`;
@@ -122,7 +128,7 @@ Everything that can change between scans of a person is here, not in subject.jso
   dataset.json. Restricted data is converted like any other but is not published, file by file: a scan can publish
   the open masks drawn on a restricted image.
 - **Subsets.** A dataset that collects data from several sources with terms of their own (e.g. CADS) lists them in
-  `subsets`, each with its name, URL, citation and licenses; a scan's provider entry names its subset.
+  `subsets`, each with its name, URL and licenses; a scan's provider entry names its subset.
 - **Derived datasets.** `derived_from` lists the BoneHub IDs of the datasets a dataset was made from, wholly or in
   part. Where a scan was made from a scan of a BoneHub-format dataset, its `source_scan_id` is that scan's path, e.g.
   `ds-0027/sub-000001/scan-01`.
@@ -133,7 +139,9 @@ Everything that can change between scans of a person is here, not in subject.jso
 - **Images** are NIfTI, on the grid of the source image (never resampled by the conversion). CT is stored as int16 when
   that is lossless, which it is for HU values; float64 images are stored as float32.
 - **Segmentations** are 3D Slicer segmentation files (`.seg.nrrd`), one per provider, on the grid of the image; see
-  below.
+  below. A provider's mask that holds the image's voxels in another order (an axis stored flipped) or with an origin
+  off by less than half a voxel (header rounding) is written again on the image grid at conversion, which moves no
+  label; a mask on any other grid fails the subject.
 - **Meshes** (`.stl`) and **NURBS surfaces** (`.iges`, `.step`) are in the physical space of the image, in LPS and
   millimetres, one file per label and file type. A scan keeps each provider's in `mesh.ds-NNNN/` and
   `nurbs.ds-NNNN/`; the zips of these folders are what gets published. A scan without an image (e.g. of a dataset that

@@ -10,6 +10,7 @@ import SimpleITK as sitk
 import support
 from bonehub_format import Database, layout, pack, unpack, validate
 from bonehub_format.converter import DatasetConversionError, natural_key
+from bonehub_format.segmentation_file import read_segmentation
 
 
 class ConvertedDataset(unittest.TestCase):
@@ -108,6 +109,53 @@ class TestMergedScans(unittest.TestCase):
     def test_provider_without_subjects_is_its_dataset_json(self):
         self.assertEqual(sorted(p.name for p in (self.root / "ds-0007").iterdir()), ["dataset.json"])
         self.assertEqual(validate(self.root), [])
+
+    def _convert_with_moved_labels(self, name: str, move) -> Path:
+        """Convert a source whose provider labels are the home labels written by move(labels) -> sitk.Image."""
+        source = support.make_source(self.tmp / f"{name}-source", {"a": ["ct"]})
+        labels = sitk.ReadImage(str(source / "a" / "ct" / "labels.nii.gz"))
+        sitk.WriteImage(move(labels), str(source / "a" / "ct" / "labels_moved.nii.gz"))
+        converter = support.SyntheticConverter(source, contributions=True)
+        converter.custom_data_handlers.read_dataset = support.read_dataset_with_moved_contribution
+        root = self.tmp / f"{name}-root"
+        converter.export_to_bonehub_format(root, 3, num_workers=1, verbose=False)
+        return root
+
+    def test_a_provider_mask_on_another_grid_fails_the_subject(self):
+        def shift(labels):
+            labels.SetOrigin(tuple(o + 5.0 for o in labels.GetOrigin()))
+            return labels
+
+        with self.assertRaises(DatasetConversionError):
+            self._convert_with_moved_labels("shifted", shift)
+        self.assertFalse((self.tmp / "shifted-root" / "ds-0003" / "sub-000001").exists())
+
+    def _assert_on_the_image_grid(self, root: Path):
+        scan = Database(root).dataset(3).subject(1).scan(1)
+        image = sitk.ReadImage(str(scan.path / layout.IMAGE_FILE))
+        home, provider = (read_segmentation(scan.segmentation_paths()[i]) for i in (3, support.PROVIDER_ID))
+        for mask in (home, provider):
+            self.assertEqual(mask.GetSize(), image.GetSize())
+            self.assertEqual(mask.GetOrigin(), image.GetOrigin())
+            self.assertEqual(mask.GetDirection(), image.GetDirection())
+        # the same voxels are labelled: the provider's labels are the home labels under other names
+        self.assertTrue((sitk.GetArrayFromImage(home) > 0).sum() > 0)
+        self.assertTrue(((sitk.GetArrayFromImage(home) > 0) == (sitk.GetArrayFromImage(provider) > 0)).all())
+
+    def test_a_provider_mask_stored_flipped_is_put_on_the_image_grid(self):
+        def flip(labels):
+            flipped = sitk.Flip(labels, [True, False, False])  # the same voxels, the first axis stored reversed
+            self.assertNotEqual(flipped.GetDirection(), labels.GetDirection())
+            return flipped
+
+        self._assert_on_the_image_grid(self._convert_with_moved_labels("flipped", flip))
+
+    def test_a_provider_mask_with_an_origin_off_by_less_than_half_a_voxel_is_put_on_the_image_grid(self):
+        def nudge(labels):
+            labels.SetOrigin(tuple(o + 0.4 * s for o, s in zip(labels.GetOrigin(), labels.GetSpacing())))
+            return labels
+
+        self._assert_on_the_image_grid(self._convert_with_moved_labels("nudged", nudge))
 
     def test_a_provider_missing_from_the_database_is_a_problem(self):
         root = self.tmp / "without-provider"

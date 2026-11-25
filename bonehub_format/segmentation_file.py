@@ -146,8 +146,8 @@ def _tags(reader_or_image, i: int) -> dict[str, str]:
     return dict(tag.split(":", 1) for tag in reader_or_image.GetMetaData(key).split("|") if ":" in tag)
 
 
-def read_segmentation(path: Path) -> sitk.Image:
-    """Read a mask as an int32 image of LabelMap values (0 for background)."""
+def read_segment_numbers(path: Path) -> tuple[sitk.Image, dict[int, int]]:
+    """Read a mask as stored: an image of segment numbers, and the LabelMap value of each number."""
     np, sitk = _io_modules()
     image = sitk.ReadImage(str(path))
 
@@ -163,6 +163,13 @@ def read_segmentation(path: Path) -> sitk.Image:
         else:
             raise ValueError(f"Segment '{name}' in '{path}' has no BoneHub label.")
         i += 1
+    return image, value_of
+
+
+def read_segmentation(path: Path) -> sitk.Image:
+    """Read a mask as an int32 image of LabelMap values (0 for background)."""
+    np, sitk = _io_modules()
+    image, value_of = read_segment_numbers(path)
 
     lookup = np.zeros(max(value_of, default=0) + 1, dtype=np.int32)
     for number, value in value_of.items():

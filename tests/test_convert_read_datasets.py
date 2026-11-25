@@ -71,6 +71,7 @@ class TestSpineMetsCTSeg(_ConvertAndRead, unittest.TestCase):
 
 class TestEnhancePET(_ConvertAndRead, unittest.TestCase):
     converter, source, dataset_id = "EnhancePET", "0134 enhance-pet-1_6k", 134
+    subjects = 4  # the first 2 non-autoPET subjects and the first 2 autoPET patients
     providers = (
         (18, "Atlas", "0018 Atlas dataset"),
         (40, "FDGPETCTLesions", "0040 TCIA FDG-PET-CT-Lesions"),

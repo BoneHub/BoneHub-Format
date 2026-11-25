@@ -136,7 +136,6 @@ class SubsetInfo(_Metadata):
     description: str | None = Field(None, description="What the collection is")
     url: str | None = Field(None, description="Where the original collection is published")
     paper: str | None = Field(None, description="DOI or URL of the paper describing the collection")
-    citation: str | None = Field(None, description="BibTeX entry to cite the collection with")
     license: Licenses | None = Field(None, description="License of the collection's data, where it differs")
     remarks: str | None = Field(None, description="Remarks about the collection")
 
@@ -148,7 +147,6 @@ class DatasetInfo(_Metadata):
     description: str | None = Field(None, description="Description of the dataset and of how it was converted")
     url: str | None = Field(None, description="Where the source dataset is published")
     paper: str | None = Field(None, description="DOI or URL of the paper describing the source dataset")
-    citation: str | None = Field(None, description="BibTeX entry to cite the source dataset with")
     country: str | None = Field(None, description="Country of origin")
     release_date: str | None = Field(None, description="Release date (or year) of the source dataset")
     version: str | None = Field(None, description="Version of the source dataset that was converted")

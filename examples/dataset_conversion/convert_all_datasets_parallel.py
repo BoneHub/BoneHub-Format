@@ -17,11 +17,11 @@ Convert only the subjects that failed (or were not reached) in an earlier run:
 Some datasets give all their data to the scans of others (their subjects live there; see the converter module docstring
 in bonehub_format/converter.py): atlas (into enhance_pet), fdg_pet_ct_lesions (enhance_pet), vsd_lower_extremities_seg
 (vsd_full_body) and visible_human_cob (visible_human_3d_models). They write only their dataset.json, which the
-database needs for the licenses and citation of that data: convert them together with the datasets they give data to.
+database needs for the licenses of that data: convert them together with the datasets they give data to.
 
 The whole-body datasets of 3D-Bone-Database (Phase 1):
 
-    python examples/dataset_conversion/convert_all_datasets_parallel.py --output-root /mnt/nas/BoneHub/Harmonized_Databases/3D-Bone-Database --overwrite --datasets totalsegmentator_ct totalsegmentator_mri healthy_total_body_cts enhance_pet atlas fdg_pet_ct_lesions psma_fdg_pet_ct_lesions quadra_hc vsd_full_body vsd_lower_extremities_seg visible_human_3d_models visible_human_cob openskeleton
+    python examples/dataset_conversion/convert_all_datasets_parallel.py --output-root /mnt/nas/BoneHub/Harmonized_Databases/3D-Bone-Database --overwrite --datasets totalsegmentator_ct totalsegmentator_mri healthy_total_body_cts enhance_pet atlas fdg_pet_ct_lesions psma_fdg_pet_ct_lesions quadra_hc vsd_full_body vsd_lower_extremities_seg visible_human_3d_models visible_human_cob openskeleton cads
 
 Afterwards, get the database ready to upload (see the README):
 
@@ -165,6 +165,18 @@ DATASET_JOBS: tuple[DatasetJob, ...] = (
         dataset_id=40,
         dataset_class=custom_dataset_io.FDGPETCTLesions,
         source_root=Path("/mnt/nas/BoneHub/Public_Datasets/0040 TCIA FDG-PET-CT-Lesions"),
+    ),
+    DatasetJob(
+        name="cads",
+        dataset_id=133,
+        dataset_class=custom_dataset_io.CADS,
+        source_root=Path("/mnt/nas/BoneHub/Public_Datasets/0133 CADS-dataset"),
+    ),
+    DatasetJob(
+        name="ct_rate",  # written for completeness; not part of 3D-Bone-Database (chest only, very large)
+        dataset_id=135,
+        dataset_class=custom_dataset_io.CTRATE,
+        source_root=Path("/mnt/nas/BoneHub/Public_Datasets/0135 CT-RATE/dataset"),
     ),
     DatasetJob(
         name="psma_fdg_pet_ct_lesions",

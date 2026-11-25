@@ -1010,36 +1010,6 @@ td.empty-state {
     font-size: 0.9rem;
 }
 
-/* Citation Box */
-.citation-box {
-    background-color: #f8f9fa;
-    border-left: 4px solid var(--secondary-color);
-    padding: 1rem;
-    margin: 1rem 0;
-    border-radius: 4px;
-}
-
-.citation-box h3 {
-    font-size: 1rem;
-    margin-bottom: 0.5rem;
-    color: var(--primary-color);
-}
-
-.citation-box pre {
-    background-color: #2d2d2d;
-    color: #f8f8f2;
-    padding: 1rem;
-    border-radius: 4px;
-    overflow-x: auto;
-    margin: 0;
-}
-
-.citation-box code {
-    font-family: 'Courier New', Courier, monospace;
-    font-size: 0.85rem;
-    line-height: 1.5;
-}
-
 /* Contact Section */
 .contact p {
     margin: 0.5rem 0;

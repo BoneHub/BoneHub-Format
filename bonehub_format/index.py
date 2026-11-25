@@ -92,7 +92,7 @@ def collect_index(root: Path) -> dict[str, list[dict]]:
         datasets.append(
             {
                 "dataset_id": dataset.id,
-                **{field: getattr(info, field) for field in ("name", "description", "url", "paper", "citation")},
+                **{field: getattr(info, field) for field in ("name", "description", "url", "paper")},
                 **{field: getattr(info, field) for field in ("country", "release_date", "version")},
                 **{f"license_{kind}": info.license.of(kind) if info.license else None for kind in LICENSE_KINDS},
                 "subsets": json.dumps(
@@ -174,7 +174,7 @@ def _schemas(pa) -> dict:
     return {
         "datasets": pa.schema(
             [("dataset_id", pa.int32())]
-            + [(field, text) for field in ("name", "description", "url", "paper", "citation", "country")]
+            + [(field, text) for field in ("name", "description", "url", "paper", "country")]
             + [(field, text) for field in ("release_date", "version")]
             + [(f"license_{kind}", text) for kind in LICENSE_KINDS]
             + [("subsets", text), ("derived_from", pa.list_(pa.int32())), ("annotated_labels", labels)]
