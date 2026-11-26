@@ -4,7 +4,7 @@ Whether a change is made in place or published as a new dataset is up to whoever
 README). In place, the origin each label has in its file's JSON tells the labels of the source from those added later:
 a bone added by a model is model:<name>@<version>, one drawn or corrected by hand is manual.
 
-A scan holds numbered files of each kind (segmentation-1.nrrd, segmentation-2.nrrd, ...), each from one source. These
+A scan holds numbered files of each kind (segmentation-01.nrrd, segmentation-02.nrrd, ...), each from one source. These
 functions change one of them, `number`, or write a new one when no number is given: its JSON file names `source` (the
 dataset's first source by default) and the scan's path (e.g. ds-0001/sub-000001/scan-01) as its source_scan_id.
 
@@ -13,7 +13,7 @@ after it are numbered again. They leave dataset.json alone: when a label is now 
 add it to its annotated_labels yourself. Rebuild the index afterwards.
 
     update_segmentation(scan, mask, origin="model:TotalSegmentator@2.4.0")          # a new segmentation file
-    update_segmentation(scan, remove=["PATELLA_LEFT"], number=2)                     # in segmentation-2.nrrd
+    update_segmentation(scan, remove=["PATELLA_LEFT"], number=2)                     # in segmentation-02.nrrd
     update_model_files(scan, "mesh", {"FEMUR_LEFT": Path("femur.stl")}, origin="derived:my-mesher@1.0", number=1)
     update_model_files(scan, "mesh", remove=["FEMUR_LEFT"], number=1)
 
@@ -64,7 +64,7 @@ def _file(folder: Path, kind: str, number: int | None, source: int | None) -> tu
     numbers = _numbers(folder, kind)
     if number is not None:
         if number not in numbers:
-            raise ValueError(f"'{folder}' has no {kind}-{number}; its {kind} files are {numbers}.")
+            raise ValueError(f"'{folder}' has no {kind}-{number:02d}; its {kind} files are {numbers}.")
         if source is not None:
             raise ValueError("source is given for a new file only; an existing file keeps its source.")
         return number, LabeledFileInfo.load(layout.data_json(folder, kind, number))
@@ -103,7 +103,7 @@ def _renumber(folder: Path, kind: str) -> None:
         for entry in folder.iterdir():
             parsed = layout.parse_scan_entry(entry.name)
             if parsed is not None and parsed[0] == kind and parsed[1] == old:
-                entry.rename(folder / entry.name.replace(f"{kind}-{old}", f"{kind}-{new}", 1))
+                entry.rename(folder / entry.name.replace(f"{kind}-{old:02d}", f"{kind}-{new:02d}", 1))
 
 
 def _record(scan, folder: Path, kind: str, number: int, info: LabeledFileInfo, present: Iterable[str], added: dict[str, str]):
@@ -249,7 +249,7 @@ def update_model_files(
     number: int | None = None,
     source: int | None = None,
 ) -> list[str]:
-    """Add or replace the files of labels in a mesh or nurbs folder of the scan (e.g. mesh-1/), take out labels, and
+    """Add or replace the files of labels in a mesh or nurbs folder of the scan (e.g. mesh-01/), take out labels, and
     rewrite the zip.
 
     files: label -> the file, or files, to copy in for it, each with a suffix of the kind (.stl for mesh; .iges or

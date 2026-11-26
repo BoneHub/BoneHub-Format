@@ -3,8 +3,9 @@
     README.md        the dataset card: what the data is, how it is laid out and how to download parts of it
     LICENSE.md       the licenses of each source per kind of data, and of the subsets and files that have their own
     .gitattributes   which files Hugging Face stores as large files
-    .gitignore       what stays out of the upload: upload.md, logs, the per-label model folders (their zips are
-                     uploaded) and every file whose license is restricted or not known
+    .gitignore       what stays out of the upload: upload.md, logs, the webpage (published on GitHub Pages), the
+                     per-label model folders (their zips are uploaded) and every file whose license is restricted or
+                     not known
     upload.md        how to upload the database; it is not uploaded itself
 
 Whether a file is published is decided per file, from its license (see reader.DataFile.license): a scan can publish
@@ -40,7 +41,6 @@ _GITATTRIBUTES = """\
 *.iges filter=lfs diff=lfs merge=lfs -text
 *.step filter=lfs diff=lfs merge=lfs -text
 *.png filter=lfs diff=lfs merge=lfs -text
-github-webpage/data.js filter=lfs diff=lfs merge=lfs -text
 """
 
 _MODALITY_TAGS = {"CT": "ct", "MR": "mri", "MRI": "mri", "PT": "pet", "CBCT": "cbct", "US": "ultrasound"}
@@ -96,6 +96,7 @@ def excluded_from_upload(root: Path) -> list[tuple[str, str]]:
     excluded = [
         ("upload.md", "upload.md"),
         (f"{layout.LOGS_DIR}/", f"{layout.LOGS_DIR}/*"),
+        (f"{layout.WEBPAGE_DIR}/", f"{layout.WEBPAGE_DIR}/*"),  # published on GitHub Pages, not on Hugging Face
         (".bonehub_qc/", ".bonehub_qc/*"),
         ("__pycache__/", "*__pycache__/*"),
         ("*.tmp", "*.tmp"),
@@ -113,7 +114,7 @@ def _gitignore(root: Database) -> str:
     ]
     for pattern, _ in excluded_from_upload(root):
         if pattern == "**/mesh-*/":
-            lines.append("# Per-label model files: their zips (mesh-N.zip, nurbs-N.zip) are uploaded instead")
+            lines.append("# Per-label model files: their zips (mesh-NN.zip, nurbs-NN.zip) are uploaded instead")
         elif pattern.startswith("/ds-") and not any(line.startswith("# Not published") for line in lines):
             lines.append(f"# Not published: files under a restricted license ('{RESTRICTED}') or with no known license")
         lines.append(pattern)
@@ -266,10 +267,10 @@ def _card(root: Database, summary: _Summary, repo_id: str, title: str, descripti
         "    └── scan-01/                 a scan of the subject",
         "        ├── scan.json            modality, age, weight, height, ...",
         "        ├── image.nii.gz         + image.json           the source of the image, its ID there",
-        "        ├── segmentation-1.nrrd  + segmentation-1.json  its source, labels and their origin",
-        "        ├── segmentation-2.nrrd  + segmentation-2.json  another source's segmentation of the same image",
-        "        ├── mesh-1.zip           + mesh-1.json          <LABEL>.stl",
-        "        └── nurbs-1.zip          + nurbs-1.json         <LABEL>.iges / <LABEL>.step",
+        "        ├── segmentation-01.nrrd  + segmentation-01.json  its source, labels and their origin",
+        "        ├── segmentation-02.nrrd  + segmentation-02.json  another source's segmentation of the same image",
+        "        ├── mesh-01.zip           + mesh-01.json          <LABEL>.stl",
+        "        └── nurbs-01.zip          + nurbs-01.json         <LABEL>.iges / <LABEL>.step",
         "index/                           Parquet tables of the datasets, sources, scans, files and labels",
         "```",
         "",
@@ -339,7 +340,7 @@ def _card(root: Database, summary: _Summary, repo_id: str, title: str, descripti
         f"[BoneHub registry]({REGISTRY_PAGE_URL}), its sources, listed in its `dataset.json` by their BoneHub ID. "
         "Every data file has a JSON file of the same name that names its source and the scan's ID there.",
         "- **Several versions**: where two sources segmented the same structure of a scan, both are kept, as "
-        "`segmentation-1.nrrd` and `segmentation-2.nrrd`; the files of a kind are numbered within the scan.",
+        "`segmentation-01.nrrd` and `segmentation-02.nrrd`; the files of a kind are numbered within the scan.",
         "- **Origin**: every label says how its source came by it: `source` (with the source dataset), "
         "`manual`, `model:<name>@<version>` or `derived:<tool>@<version>` (made from another file of the scan, "
         "e.g. a mesh from the segmentation).",
@@ -365,8 +366,8 @@ def _license_file(summary: _Summary) -> str:
         "# Licenses",
         "",
         "Each file is under the license of its source (a dataset of the BoneHub registry, named in the file's JSON), "
-        "for its kind of data: `image.nii.gz` under the source's image license, `segmentation-N.nrrd` under its "
-        "segmentation license, `mesh-N.zip` and `nurbs-N.zip` under its mesh or NURBS license. Collections of a source "
+        "for its kind of data: `image.nii.gz` under the source's image license, `segmentation-NN.nrrd` under its "
+        "segmentation license, `mesh-NN.zip` and `nurbs-NN.zip` under its mesh or NURBS license. Collections of a source "
         "with terms of their own, and files with a license of their own, are listed below the table; "
         "`index/files.parquet` (`license`) gives the license of every file.",
         "",
@@ -438,7 +439,7 @@ This file is listed in `.gitignore`, so it is not uploaded.
 python -m bonehub_format prepare "{root}" --repo-id {repo_id} --title "{title}"
 ```
 
-This brings the zips of the model folders (`mesh-N/`, `nurbs-N/`) up to date, rebuilds the index, checks the database, and writes
+This brings the zips of the model folders (`mesh-NN/`, `nurbs-NN/`) up to date, rebuilds the index, checks the database, and writes
 the card, `LICENSE.md`, `.gitattributes`, `.gitignore`, this file and `github-webpage/`. Fix any problem it reports
 before uploading.
 
@@ -465,8 +466,9 @@ access requests there (gating applies to the whole repository). Then add it to t
 python -m bonehub_format upload "{root}" --repo-id {repo_id} --commit-message "Upload {title}"
 ```
 
-This leaves out what `.gitignore` lists: this file, the logs, the per-label model folders (their zips are
-uploaded) and every file whose license is restricted or not known. Do not upload with `hf upload` alone: it does not read `.gitignore`,
+This leaves out what `.gitignore` lists: this file, the logs, the webpage (`github-webpage/`, which goes to GitHub
+Pages, see step 6), the per-label model folders (their zips are uploaded) and every file whose license is restricted
+or not known. Do not upload with `hf upload` alone: it does not read `.gitignore`,
 so it would upload all of it, restricted data included. Running the command again resumes an interrupted upload and
 skips files that are already there.
 
@@ -481,7 +483,8 @@ hf repos tag create {repo_id} v1.0 --repo-type dataset
 
 ## 6. Publish the webpage
 
-See `github-webpage/README.md`.
+The webpage is not part of the Hugging Face repository: publish `github-webpage/` on GitHub Pages, see
+`github-webpage/README.md`.
 """
 
 

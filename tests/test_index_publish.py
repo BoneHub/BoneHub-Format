@@ -105,12 +105,12 @@ class TestDatabase(unittest.TestCase):
         first_files = [(row["kind"], row["number"], row["path"], row["source"], row["published"]) for row in files if row["scan"] == first["scan"]]
         self.assertEqual(first_files, [
             ("image", None, "ds-0001/sub-000001/scan-01/image.nii.gz", 3, True),
-            ("segmentation", 1, "ds-0001/sub-000001/scan-01/segmentation-1.nrrd", 3, True),
-            ("mesh", 1, "ds-0001/sub-000001/scan-01/mesh-1.zip", 3, True),
+            ("segmentation", 1, "ds-0001/sub-000001/scan-01/segmentation-01.nrrd", 3, True),
+            ("mesh", 1, "ds-0001/sub-000001/scan-01/mesh-01.zip", 3, True),
         ])
         self.assertTrue(all(row["size"] > 0 for row in files))
         merged_files = [(row["path"].rsplit("/", 1)[1], row["source"], row["license"]) for row in files if row["dataset_id"] == 2]
-        self.assertIn(("segmentation-2.nrrd", 7, "CC-BY-NC-4.0"), merged_files)
+        self.assertIn(("segmentation-02.nrrd", 7, "CC-BY-NC-4.0"), merged_files)
 
         labels = pq.read_table(paths["labels"]).to_pylist()
         femur = [row for row in labels if row["scan"] == first["scan"] and row["label"] == "FEMUR_LEFT"]
@@ -143,7 +143,7 @@ class TestDatabase(unittest.TestCase):
                       "[7](https://bonehub.github.io/Public-Datasets/#dataset=7) Synthetic provider |", card)
         self.assertIn("resolve/main/<path>?download=true", card)
         gitignore = (self.root / ".gitignore").read_text(encoding="utf-8")
-        for line in ("upload.md", "logs/", "**/mesh-*/", "/ds-0003/*/*/image.nii.gz", "/ds-0004/*/*/image.nii.gz"):
+        for line in ("upload.md", "logs/", "github-webpage/", "**/mesh-*/", "/ds-0003/*/*/image.nii.gz", "/ds-0004/*/*/image.nii.gz"):
             self.assertIn(f"\n{line}\n", gitignore)
         self.assertIn("python -m bonehub_format upload", (self.root / "upload.md").read_text(encoding="utf-8"))
         license_file = (self.root / "LICENSE.md").read_text(encoding="utf-8")
@@ -153,14 +153,14 @@ class TestDatabase(unittest.TestCase):
         patterns = [pattern for _, pattern in excluded_from_upload(self.root)]
         def uploaded(path):
             return not any(fnmatch.fnmatchcase(path, pattern) for pattern in patterns)
-        for path in ("upload.md", "logs/ds-0001.log", "ds-0001/sub-000001/scan-01/mesh-1/FEMUR_LEFT.stl",
-                     "ds-0003/sub-000001/scan-01/image.nii.gz", "ds-0003/sub-000001/scan-01/segmentation-1.nrrd",
-                     "ds-0003/sub-000001/scan-01/mesh-1.zip", "ds-0004/sub-000001/scan-01/image.nii.gz"):
+        for path in ("upload.md", "logs/ds-0001.log", "github-webpage/index.html", "github-webpage/data.js", "ds-0001/sub-000001/scan-01/mesh-01/FEMUR_LEFT.stl",
+                     "ds-0003/sub-000001/scan-01/image.nii.gz", "ds-0003/sub-000001/scan-01/segmentation-01.nrrd",
+                     "ds-0003/sub-000001/scan-01/mesh-01.zip", "ds-0004/sub-000001/scan-01/image.nii.gz"):
             self.assertFalse(uploaded(path), path)
-        for path in ("README.md", "ds-0001/sub-000001/scan-01/mesh-1.zip", "ds-0001/sub-000001/scan-01/image.nii.gz",
-                     "ds-0001/sub-000001/scan-01/mesh-1.json", "index/scans.parquet", "github-webpage/index.html",
+        for path in ("README.md", "ds-0001/sub-000001/scan-01/mesh-01.zip", "ds-0001/sub-000001/scan-01/image.nii.gz",
+                     "ds-0001/sub-000001/scan-01/mesh-01.json", "index/scans.parquet",
                      "ds-0003/dataset.json", "ds-0003/sub-000001/scan-01/image.json",
-                     "ds-0004/sub-000001/scan-01/segmentation-1.nrrd", "ds-0004/sub-000001/scan-01/mesh-1.zip"):
+                     "ds-0004/sub-000001/scan-01/segmentation-01.nrrd", "ds-0004/sub-000001/scan-01/mesh-01.zip"):
             self.assertTrue(uploaded(path), path)
 
         folder = build_webpage(self.root, "Test Dataset", hf_repo_id="Org/Test-Dataset", contact_html="<p>someone</p>")
@@ -176,15 +176,17 @@ class TestDatabase(unittest.TestCase):
         self.assertEqual([d["folder"] for d in site["datasets"]], ["ds-0001", "ds-0002", "ds-0003", "ds-0004"])
         self.assertEqual(site["datasets"][1]["sources"], [[5, "Synthetic", None], [7, "Synthetic provider", None]])
         self.assertEqual(len(site["scans"]), 5)
-        key, dataset, sex, age, modality, labels, files = site["scans"][0]
-        self.assertEqual((key, dataset, sex, age, modality), ("ds-0001/sub-000001/scan-01", 0, "F", 60, "CT"))
+        key, dataset, sex, age, modality, race, ethnicity, labels, meshes, nurbs, files = site["scans"][0]
+        self.assertEqual((key, dataset, sex, age, modality, race, ethnicity), ("ds-0001/sub-000001/scan-01", 0, "F", 60, "CT", None, None))
         self.assertEqual([site["labels"][i] for i in labels], ["FEMUR_LEFT", "FEMUR_RIGHT"])
+        self.assertEqual([site["labels"][i] for i in meshes], ["FEMUR_LEFT"])  # labels of every kind, for the filters
+        self.assertEqual(nurbs, [])
         self.assertEqual(site["sections"][site["labelSection"][labels[0]]], "Leg")
         self.assertEqual([(f[0], f[1], f[3], f[4], f[5]) for f in files],
                          [("image", None, True, 3, "CC-BY-4.0"), ("segmentation", 1, True, 3, "CC-BY-4.0"), ("mesh", 1, True, 3, "CC-BY-4.0")])
         self.assertTrue(all(f[2] > 0 for f in files))
         restricted = [scan for scan in site["scans"] if scan[0].startswith("ds-0003")][0]
-        self.assertEqual({f[3] for f in restricted[6]}, {False})
+        self.assertEqual({f[3] for f in restricted[-1]}, {False})
         self.assertEqual(site["sources"]["7"]["licenses"]["segmentation"], "CC-BY-NC-4.0")
         self.assertNotIn("{{", (folder / "update_data.py").read_text(encoding="utf-8"))
         self.assertTrue((folder / ".nojekyll").exists() and (folder / "app.js").exists())

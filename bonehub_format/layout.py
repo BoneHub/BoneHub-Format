@@ -12,15 +12,15 @@
             └── scan-01/
                 ├── scan.json             the scan: modality, age, weight, ...
                 ├── image.nii.gz          + image.json
-                ├── segmentation-1.nrrd   + segmentation-1.json
-                ├── segmentation-2.nrrd   + segmentation-2.json
-                ├── mesh-1/   <LABEL>.stl                 -> mesh-1.zip   + mesh-1.json
-                └── nurbs-1/  <LABEL>.iges, <LABEL>.step  -> nurbs-1.zip  + nurbs-1.json
+                ├── segmentation-01.nrrd  + segmentation-01.json
+                ├── segmentation-02.nrrd  + segmentation-02.json
+                ├── mesh-01/   <LABEL>.stl                 -> mesh-01.zip   + mesh-01.json
+                └── nurbs-01/  <LABEL>.iges, <LABEL>.step  -> nurbs-01.zip  + nurbs-01.json
 
 A folder's name is its ID. A dataset's number has no meaning outside its database: the registry datasets it was made
 from are listed in its dataset.json. Every data file has a JSON file of the same name that says which source it came
 from, under which license, and (for segmentations, meshes and NURBS) which labels it holds. The files of one kind are
-numbered within the scan (segmentation-1, segmentation-2, ...), whatever their source.
+numbered within the scan with two digits, as scans are (segmentation-01, segmentation-02, ...), whatever their source.
 """
 
 import re
@@ -34,7 +34,7 @@ IMAGE_JSON = "image.json"
 SEGMENTATION_SUFFIX = ".nrrd"
 
 #: Kinds of per-label model files in a scan, with the file types each holds. A scan keeps them in a numbered folder
-#: (mesh-1/) and publishes them as a zip of that folder (mesh-1.zip).
+#: (mesh-01/) and publishes them as a zip of that folder (mesh-01.zip).
 MODEL_KINDS: dict[str, tuple[str, ...]] = {
     "mesh": (".stl",),
     "nurbs": (".iges", ".step"),
@@ -54,12 +54,13 @@ WEBPAGE_DIR = "github-webpage"
 MAX_DATASETS = 9999
 MAX_SUBJECTS_PER_DATASET = 999999
 MAX_SCANS_PER_SUBJECT = 99
+MAX_FILES_PER_KIND = 99  # segmentation-01 .. segmentation-99
 
 _DATASET_DIR = re.compile(r"ds-(\d{4})")
 _SUBJECT_DIR = re.compile(r"sub-(\d{6})")
 _SCAN_DIR = re.compile(r"scan-(\d{2})")
 _SCAN_KEY = re.compile(r"ds-(\d{4})/sub-(\d{6})/scan-(\d{2})")
-_NUMBERED = re.compile(r"(" + "|".join(LABELED_KINDS) + r")-([1-9]\d*)(\.nrrd|\.zip|\.json)?")
+_NUMBERED = re.compile(r"(" + "|".join(LABELED_KINDS) + r")-(\d{2})(\.nrrd|\.zip|\.json)?")
 
 
 def _check_id(kind: str, value: int, maximum: int) -> int:
@@ -133,41 +134,41 @@ def _check_number(kind: str, number: int | None) -> int | None:
         if number is not None:
             raise ValueError("A scan has one image, which is not numbered.")
         return None
-    if type(number) is not int or number < 1:
-        raise ValueError(f"The {kind} files of a scan are numbered from 1, not {number!r}.")
+    if type(number) is not int or not 1 <= number <= MAX_FILES_PER_KIND:
+        raise ValueError(f"The {kind} files of a scan are numbered from 1 to {MAX_FILES_PER_KIND}, not {number!r}.")
     return number
 
 
 def data_file(scan_folder: Path, kind: str, number: int | None = None) -> Path:
-    """The data file of a kind that is published: image.nii.gz, segmentation-2.nrrd, mesh-1.zip, nurbs-1.zip."""
+    """The data file of a kind that is published: image.nii.gz, segmentation-02.nrrd, mesh-01.zip, nurbs-01.zip."""
     number = _check_number(_check_kind(kind), number)
     if kind == "image":
         return Path(scan_folder) / IMAGE_FILE
     if kind == "segmentation":
-        return Path(scan_folder) / f"segmentation-{number}{SEGMENTATION_SUFFIX}"
-    return Path(scan_folder) / f"{kind}-{number}.zip"
+        return Path(scan_folder) / f"segmentation-{number:02d}{SEGMENTATION_SUFFIX}"
+    return Path(scan_folder) / f"{kind}-{number:02d}.zip"
 
 
 def data_json(scan_folder: Path, kind: str, number: int | None = None) -> Path:
-    """The JSON file that describes a data file: image.json, segmentation-2.json, mesh-1.json."""
+    """The JSON file that describes a data file: image.json, segmentation-02.json, mesh-01.json."""
     number = _check_number(_check_kind(kind), number)
-    return Path(scan_folder) / (IMAGE_JSON if kind == "image" else f"{kind}-{number}.json")
+    return Path(scan_folder) / (IMAGE_JSON if kind == "image" else f"{kind}-{number:02d}.json")
 
 
 def model_folder(scan_folder: Path, kind: str, number: int) -> Path:
-    """The folder of a scan's model files of a kind: mesh-1/ (published as mesh-1.zip)."""
-    return Path(scan_folder) / f"{_check_kind(kind, MODEL_KINDS)}-{_check_number(kind, number)}"
+    """The folder of a scan's model files of a kind: mesh-01/ (published as mesh-01.zip)."""
+    return Path(scan_folder) / f"{_check_kind(kind, MODEL_KINDS)}-{_check_number(kind, number):02d}"
 
 
 def model_zip(scan_folder: Path, kind: str, number: int) -> Path:
-    """The zip of a model folder: mesh-1.zip."""
+    """The zip of a model folder: mesh-01.zip."""
     return data_file(scan_folder, _check_kind(kind, MODEL_KINDS), number)
 
 
 def parse_scan_entry(name: str) -> tuple[str, int | None, str] | None:
     """What a file or folder of a scan folder is, from its name: (kind, number, role), the role being 'data' (the
-    published file: image.nii.gz, segmentation-1.nrrd, mesh-1.zip), 'json' (its JSON file) or 'folder' (a model
-    folder, mesh-1/). The image has no number. None for any other name, scan.json included."""
+    published file: image.nii.gz, segmentation-01.nrrd, mesh-01.zip), 'json' (its JSON file) or 'folder' (a model
+    folder, mesh-01/). The image has no number. None for any other name, scan.json included."""
     if name == IMAGE_FILE:
         return "image", None, "data"
     if name == IMAGE_JSON:
@@ -176,6 +177,8 @@ def parse_scan_entry(name: str) -> tuple[str, int | None, str] | None:
     if match is None:
         return None
     kind, number, suffix = match.group(1), int(match.group(2)), match.group(3)
+    if number == 0:
+        return None
     if suffix == ".json":
         return kind, number, "json"
     if kind == "segmentation":

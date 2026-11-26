@@ -39,15 +39,15 @@ class ConvertedDataset(unittest.TestCase):
         scan_folder = self.root / "ds-0003" / "sub-000002" / "scan-02"
         self.assertEqual(
             sorted(p.name for p in scan_folder.iterdir()),
-            ["image.json", "image.nii.gz", "mesh-1", "mesh-1.json", "mesh-1.zip", "scan.json", "segmentation-1.json",
-             "segmentation-1.nrrd"],
+            ["image.json", "image.nii.gz", "mesh-01", "mesh-01.json", "mesh-01.zip", "scan.json", "segmentation-01.json",
+             "segmentation-01.nrrd"],
         )
         info = json.loads((scan_folder / "scan.json").read_text())
         self.assertEqual(info, {"modality": "CT", "age": 60, "registered_to": "scan-01"})
         self.assertEqual(json.loads((scan_folder / "image.json").read_text()), {"source": 3, "source_scan_id": "case_2/mr"})
-        segmentation = json.loads((scan_folder / "segmentation-1.json").read_text())
+        segmentation = json.loads((scan_folder / "segmentation-01.json").read_text())
         self.assertEqual(segmentation["labels"], {"FEMUR_LEFT": "source", "FEMUR_RIGHT": "source"})
-        mesh = json.loads((scan_folder / "mesh-1.json").read_text())
+        mesh = json.loads((scan_folder / "mesh-01.json").read_text())
         self.assertEqual(mesh, {"source": 3, "source_scan_id": "case_2/mr", "labels": {"FEMUR_LEFT": "derived:test-mesher@1.0"}})
         subject = json.loads((self.root / "ds-0003" / "sub-000002" / "subject.json").read_text())
         self.assertEqual(subject, {"sources": {"3": "case_2"}, "gender": "F"})
@@ -66,7 +66,7 @@ class ConvertedDataset(unittest.TestCase):
 
     def test_mesh_zip_matches_the_folder(self):
         scan = Database(self.root).dataset(3).subject(1).scan(1)
-        with zipfile.ZipFile(scan.path / "mesh-1.zip") as archive:
+        with zipfile.ZipFile(scan.path / "mesh-01.zip") as archive:
             self.assertEqual(archive.namelist(), ["FEMUR_LEFT.stl"])
         [mesh] = scan.files("mesh")
         self.assertEqual(list(mesh.model_files()), ["FEMUR_LEFT"])
@@ -93,8 +93,8 @@ class TestMergedScans(unittest.TestCase):
         scan = Database(self.root).dataset(3).subject(1).scan(1)
         self.assertEqual(scan.sources, [support.SOURCE_ID, support.PROVIDER_ID])
         first, second = scan.files("segmentation")
-        self.assertEqual((first.path.name, first.source), ("segmentation-1.nrrd", support.SOURCE_ID))
-        self.assertEqual((second.path.name, second.source), ("segmentation-2.nrrd", support.PROVIDER_ID))
+        self.assertEqual((first.path.name, first.source), ("segmentation-01.nrrd", support.SOURCE_ID))
+        self.assertEqual((second.path.name, second.source), ("segmentation-02.nrrd", support.PROVIDER_ID))
         self.assertEqual(second.info.source_scan_id, "provider-a/ct")
         self.assertEqual(second.info.labels, {"FEMUR_LEFT": "model:TestModel@2.0", "GLUTEUS_MAXIMUS_RIGHT": "model:TestModel@2.0"})
         self.assertEqual(scan.labels("segmentation"), ["GLUTEUS_MAXIMUS_RIGHT", "FEMUR_LEFT", "FEMUR_RIGHT"])  # label map order
@@ -169,7 +169,7 @@ class TestMergedScans(unittest.TestCase):
         del info["sources"][str(support.PROVIDER_ID)]
         dataset_json.write_text(json.dumps(info))
         problems = validate(root)
-        self.assertTrue(any("segmentation-2.json: comes from source 7, which dataset.json does not list" in p for p in problems))
+        self.assertTrue(any("segmentation-02.json: comes from source 7, which dataset.json does not list" in p for p in problems))
         self.assertTrue(any("subject.json: names source 7" in p for p in problems))
 
 
@@ -219,7 +219,7 @@ class TestConverterRuns(unittest.TestCase):
         source = support.make_source(self.tmp / "source", {"a": ["ct"]})
         support.SyntheticConverter(source).export_to_bonehub_format(self.root, 1, num_workers=1, verbose=False)
         scan_folder = self.root / "ds-0001" / "sub-000001" / "scan-01"
-        mesh_folder, mesh_zip = scan_folder / "mesh-1", scan_folder / "mesh-1.zip"
+        mesh_folder, mesh_zip = scan_folder / "mesh-01", scan_folder / "mesh-01.zip"
         zip_bytes = mesh_zip.read_bytes()
         self.assertEqual(pack(self.root), [])  # up to date
         (mesh_folder / "FEMUR_LEFT.stl").write_bytes(b"solid changed\nendsolid changed\n")

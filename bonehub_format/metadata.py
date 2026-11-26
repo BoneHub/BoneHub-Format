@@ -4,7 +4,7 @@
     subject.json                  SubjectInfo: the person, and their ID in each source
     scan.json                     ScanInfo: the scan (modality, age, weight, ...)
     image.json                    FileInfo: where the image came from and its license, where it differs
-    segmentation-N.json, mesh-N.json, nurbs-N.json
+    segmentation-NN.json, mesh-NN.json, nurbs-NN.json
                                   LabeledFileInfo: the same, and the labels the file holds with their origin
 
 They hold only what cannot be read from the data files themselves. Image geometry, label counts and which bones touch
@@ -212,6 +212,10 @@ class SubjectInfo(_Metadata):
         default_factory=dict, description="ID of the subject in each source it comes from, by BoneHub ID"
     )
     gender: Literal["M", "F", "O"] | None = Field(None, description="M, F or O (other); None when unknown")
+    race: str | None = Field(None, description="Race, in the words of the source, e.g. 'White'; None when unknown")
+    ethnicity: str | None = Field(
+        None, description="Ethnicity, in the words of the source, e.g. 'Hispanic or Latino'; None when unknown"
+    )
     remarks: str | None = Field(None, description="Remarks about the subject")
 
     @field_validator("sources", mode="before")
@@ -264,7 +268,7 @@ class FileInfo(_Metadata):
 
 
 class LabeledFileInfo(FileInfo):
-    """segmentation-N.json, mesh-N.json, nurbs-N.json: a data file that holds labels, and the origin of each."""
+    """segmentation-NN.json, mesh-NN.json, nurbs-NN.json: a data file that holds labels, and the origin of each."""
 
     labels: dict[str, str] = Field(default_factory=dict, description="Label -> origin, in label map order")
 

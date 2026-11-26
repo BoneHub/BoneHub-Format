@@ -7,8 +7,10 @@ Needs only pyarrow (pip install pyarrow). structures.json, written next to this 
 the section of the body (Head, Spine, ..., Muscles) of every label.
 
 data.js holds one object, `site`. Its scans are arrays, to keep the file small:
-    [scan path, dataset index, sex, age, modality, segmented label indices, files]
+    [scan path, dataset index, sex, age, modality, race, ethnicity,
+     label indices of the segmentations, of the meshes, of the NURBS surfaces, files]
 and each file is [kind ('image', 'segmentation', 'mesh', 'nurbs'), number, size in bytes, published, source, license].
+`labels` are the labels of any kind in the database, in label map order.
 """
 
 import json
@@ -24,6 +26,7 @@ HERE = Path(__file__).resolve().parent
 HF_REPO_ID = "{{HF_REPO_ID}}"
 REGISTRY_PAGE_URL = "{{REGISTRY_PAGE_URL}}"
 LICENSE_KINDS = ("image", "segmentation", "mesh", "nurbs")
+LABELED_KINDS = ("segmentation", "mesh", "nurbs")
 
 
 def _table(index_dir: Path, name: str) -> list[dict]:
@@ -37,7 +40,7 @@ def site_data(index_dir: Path) -> dict:
     structures = json.loads((HERE / "structures.json").read_text(encoding="utf-8"))
 
     label_order = {label: i for i, label in enumerate(structures["labels"])}
-    present = {label for scan in scans for label in scan["segmentation"] or []}
+    present = {label for scan in scans for kind in LABELED_KINDS for label in scan[kind] or []}
     labels = sorted(present, key=lambda label: label_order.get(label, len(label_order)))
     label_index = {label: i for i, label in enumerate(labels)}
 
@@ -80,7 +83,9 @@ def site_data(index_dir: Path) -> dict:
                 scan["gender"],
                 scan["age"],
                 scan["modality"],
-                [label_index[label] for label in scan["segmentation"] or []],
+                scan["race"],
+                scan["ethnicity"],
+                *([label_index[label] for label in scan[kind] or []] for kind in LABELED_KINDS),
                 files_of[scan["scan"]],
             ]
             for scan in scans

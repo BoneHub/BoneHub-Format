@@ -473,7 +473,9 @@ main > section > h2 {
     top: 12px;
     max-height: calc(100vh - 24px);
     overflow-y: auto;
-    padding-right: 4px;
+    /* room for the focus rings of the controls at the edges, which the scrolling box would cut off */
+    margin-left: -6px;
+    padding: 4px 8px 4px 6px;
 }
 
 .filter-group {
@@ -508,6 +510,45 @@ main > section > h2 {
     color: var(--text-muted);
     font-size: 0.78rem;
     font-variant-numeric: tabular-nums;
+}
+
+.filter-option.empty-option {
+    color: var(--text-muted);
+}
+
+.filter-option input,
+.filter-group input[type="text"],
+.filter-range input {
+    margin: 0;
+}
+
+.filter-group input[type="text"] {
+    width: 100%;
+}
+
+.filter-select {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 8px;
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+}
+
+.filter-select select {
+    font: inherit;
+    font-size: 0.85rem;
+    padding: 4px 6px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--surface);
+    color: var(--text-primary);
+}
+
+.filter-hint {
+    margin-top: 8px;
+    font-size: 0.75rem;
+    color: var(--text-muted);
 }
 
 .filter-range {
@@ -553,6 +594,7 @@ input[type="text"] {
 }
 
 input:focus,
+select:focus,
 button:focus-visible,
 a:focus-visible {
     outline: 2px solid var(--series-bar);
@@ -686,6 +728,22 @@ tbody tr:hover {
 .structures {
     cursor: default;
     border-bottom: 1px dotted var(--text-muted);
+    font-variant-numeric: tabular-nums;
+}
+
+.structures-cell {
+    min-width: 110px;
+}
+
+.matched {
+    margin-top: 4px;
+    font-size: 0.78rem;
+    line-height: 1.4;
+    color: var(--text-primary);
+}
+
+.matched .kinds {
+    color: var(--text-muted);
 }
 
 .downloads {

@@ -1,6 +1,6 @@
-"""The zips in which a scan's per-label model files are published: mesh-1.zip, nurbs-1.zip, ...
+"""The zips in which a scan's per-label model files are published: mesh-01.zip, nurbs-01.zip, ...
 
-A scan keeps its model files in numbered folders of their kind (mesh-1/, nurbs-1/), one file per label and file
+A scan keeps its model files in numbered folders of their kind (mesh-01/, nurbs-01/), one file per label and file
 type. pack() writes each folder into a zip of the same name; the zips are published and the folders are not. unpack() does the reverse for a downloaded copy. A zip is rewritten only when its
 folder has changed, and the same files always give the same zip.
 """
@@ -64,7 +64,7 @@ def model_entries(scan_folder: Path) -> list[tuple[str, int, Path, Path]]:
 
 
 def pack_folder(folder: Path, kind: str) -> bool:
-    """Write <folder>.zip from a model folder (e.g. mesh-1/) unless it is current; return True if it was written.
+    """Write <folder>.zip from a model folder (e.g. mesh-01/) unless it is current; return True if it was written.
 
     An empty or missing folder leaves no zip.
     """

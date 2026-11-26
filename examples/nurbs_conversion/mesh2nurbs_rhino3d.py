@@ -1,6 +1,6 @@
 """Convert the meshes of BoneHub-format datasets to NURBS surfaces (IGES format) using Rhino3D.
 
-For every scan of each given dataset, each mesh of each mesh file (mesh-N/ or mesh-N.zip) is converted with the
+For every scan of each given dataset, each mesh of each mesh file (mesh-NN/ or mesh-NN.zip) is converted with the
 `mesh2nurbs-rhino3d` CLI and saved in the NURBS file of the same source (nurbs-M/<LABEL>.iges, a new one if the scan
 has none from that source); its JSON file then lists the new NURBS surfaces, with the origin
 derived:mesh2nurbs-rhino3d@<version>, and nurbs-M.zip is brought up to date. The quad remesh edge length is

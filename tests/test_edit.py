@@ -82,7 +82,7 @@ class TestEditInPlace(unittest.TestCase):
             (self.mask({LM.PATELLA_LEFT.value: np.s_[0:1, 0:1, 0:1]}), None, 1),  # no origin
             (self.mask({LM.PATELLA_LEFT.value: np.s_[0:1, 0:1, 0:1]}), "by hand", 1),  # not an origin
             (self.mask({12345: np.s_[0:1, 0:1, 0:1]}), "manual", 1),  # not a label
-            (self.mask({LM.PATELLA_LEFT.value: np.s_[0:1, 0:1, 0:1]}), "manual", 2),  # no segmentation-2
+            (self.mask({LM.PATELLA_LEFT.value: np.s_[0:1, 0:1, 0:1]}), "manual", 2),  # no segmentation-02
         ]
         for mask, origin, number in cases:
             with self.subTest(origin=origin, number=number), self.assertRaises(ValueError):
@@ -95,12 +95,12 @@ class TestEditInPlace(unittest.TestCase):
         iges.write_bytes(b"IGES")
         self.assertEqual(update_model_files(self.scan, "nurbs", {"FEMUR_LEFT": iges}, origin="derived:tool@1.0"), ["FEMUR_LEFT"])
         self.assertEqual(self.origins("nurbs"), {"FEMUR_LEFT": "derived:tool@1.0"})
-        self.assertTrue((self.scan.path / "nurbs-1" / "FEMUR_LEFT.iges").is_file())
+        self.assertTrue((self.scan.path / "nurbs-01" / "FEMUR_LEFT.iges").is_file())
         self.assertTrue(layout.model_zip(self.scan.path, "nurbs", 1).is_file())
         self.assertEqual(validate(self.root, publishing=False), [])
 
         # a downloaded copy has only the zips
-        shutil.rmtree(self.scan.path / "mesh-1")
+        shutil.rmtree(self.scan.path / "mesh-01")
         stl = self.tmp / "tibia.stl"
         stl.write_bytes(b"solid TIBIA_LEFT\nendsolid TIBIA_LEFT\n")
         update_model_files(self.scan, "mesh", {"TIBIA_LEFT": stl}, origin="manual", number=1)
@@ -122,7 +122,7 @@ class TestEditInPlace(unittest.TestCase):
         self.assertEqual(self.origins("segmentation"), {"FEMUR_LEFT": "source", "FEMUR_RIGHT": "source"})  # untouched
         self.assertEqual(validate(self.root), [])
 
-        update_segmentation(self.scan, remove=["FEMUR_LEFT", "FEMUR_RIGHT"], number=1)  # segmentation-2 becomes -1
+        update_segmentation(self.scan, remove=["FEMUR_LEFT", "FEMUR_RIGHT"], number=1)  # segmentation-02 becomes -1
         self.assertEqual(self.origins("segmentation"), {"PATELLA_LEFT": "manual"})
         self.assertFalse(layout.data_file(self.scan.path, "segmentation", 2).exists())
         self.assertEqual(validate(self.root), [])

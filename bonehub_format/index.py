@@ -185,6 +185,8 @@ def _scan_rows(root: Path, scan, rows: dict[str, list[dict]]) -> None:
             **row_ids,
             "source_subject_id": subject_info.source_subject_id(first.source) if first is not None else None,
             "gender": subject_info.gender,
+            "race": subject_info.race,
+            "ethnicity": subject_info.ethnicity,
             "source_scan_id": first.info.source_scan_id if first is not None else None,
             "sources": scan.sources,
             **{field: getattr(info, field) for field in ("modality", "age", "weight", "height", "bmi", "postmortem")},
@@ -223,7 +225,8 @@ def _schemas(pa) -> dict:
         "scans": pa.schema(
             [("scan", text)]
             + ids
-            + [("source_subject_id", text), ("gender", text), ("source_scan_id", text), ("sources", pa.list_(pa.int32()))]
+            + [("source_subject_id", text), ("gender", text), ("race", text), ("ethnicity", text)]
+            + [("source_scan_id", text), ("sources", pa.list_(pa.int32()))]
             + [("modality", text), ("age", pa.int32()), ("weight", pa.float64()), ("height", pa.float64())]
             + [("bmi", pa.float64()), ("postmortem", pa.bool_()), ("days_from_baseline", pa.int32())]
             + [("registered_to", text), ("source_split", text), ("image", pa.bool_()), ("image_source", pa.int32())]

@@ -3,7 +3,7 @@
     database = Database("path/to/database")
     for scan in database.scans():
         print(scan.key, scan.info.modality, scan.image_path)
-        for segmentation in scan.files("segmentation"):     # segmentation-1.nrrd, segmentation-2.nrrd, ...
+        for segmentation in scan.files("segmentation"):     # segmentation-01.nrrd, segmentation-02.nrrd, ...
             print(segmentation.path, segmentation.source, segmentation.labels, segmentation.license())
         for mesh in scan.files("mesh"):
             for label, files in mesh.model_files().items():
@@ -137,13 +137,13 @@ class Subject:
 
 
 class DataFile:
-    """A data file of a scan and its JSON file: the image (number None), or segmentation-N, mesh-N or nurbs-N."""
+    """A data file of a scan and its JSON file: the image (number None), or segmentation-NN, mesh-NN or nurbs-NN."""
 
     def __init__(self, scan: Scan, kind: str, number: int | None = None):
         self.scan = scan
         self.kind = kind
         self.number = number
-        self.path = layout.data_file(scan.path, kind, number)  # what is published: image.nii.gz, segmentation-1.nrrd, mesh-1.zip
+        self.path = layout.data_file(scan.path, kind, number)  # what is published: image.nii.gz, segmentation-01.nrrd, mesh-01.zip
         self.json_path = layout.data_json(scan.path, kind, number)
 
     @cached_property
@@ -162,7 +162,7 @@ class DataFile:
 
     @property
     def folder(self) -> Path | None:
-        """The unpacked folder of a model file (mesh-1/), or None."""
+        """The unpacked folder of a model file (mesh-01/), or None."""
         if self.kind not in layout.MODEL_KINDS:
             return None
         folder = layout.model_folder(self.scan.path, self.kind, self.number)

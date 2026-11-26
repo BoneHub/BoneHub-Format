@@ -38,7 +38,7 @@ and its own index and webpage. A **dataset** is a folder of the database, number
 ├── README.md, LICENSE.md, .gitattributes, .gitignore   the HuggingFace files (generated)
 ├── upload.md                                           how to upload the database (generated, not uploaded)
 ├── index/                                              datasets / sources / scans / files / labels .parquet (generated)
-├── github-webpage/                                     the database's webpage (generated)
+├── github-webpage/                                     the database's webpage (generated, for GitHub Pages; not uploaded)
 ├── logs/                                               conversion logs (not uploaded)
 └── ds-0001/                                            a dataset, numbered within the database
     ├── dataset.json                                    the dataset and its sources (registry datasets)
@@ -47,11 +47,11 @@ and its own index and webpage. A **dataset** is a folder of the database, number
         └── scan-01/                                    a scan: one image of the subject
             ├── scan.json
             ├── image.nii.gz         + image.json       the image, and where it came from
-            ├── segmentation-1.nrrd  + segmentation-1.json
-            ├── segmentation-2.nrrd  + segmentation-2.json   another source's segmentation of the same image
-            ├── mesh-1/   <LABEL>.stl                   per-label files, kept locally
-            ├── mesh-1.zip           + mesh-1.json      the zip of that folder, which is published
-            └── nurbs-1/  <LABEL>.iges, <LABEL>.step -> nurbs-1.zip + nurbs-1.json
+            ├── segmentation-01.nrrd  + segmentation-01.json
+            ├── segmentation-02.nrrd  + segmentation-02.json   another source's segmentation of the same image
+            ├── mesh-01/   <LABEL>.stl                   per-label files, kept locally
+            ├── mesh-01.zip           + mesh-01.json      the zip of that folder, which is published
+            └── nurbs-01/  <LABEL>.iges, <LABEL>.step -> nurbs-01.zip + nurbs-01.json
 ```
 
 A folder's name is its ID. A scan is identified by its path, e.g. `ds-0001/sub-000001/scan-01`. A subject holds at
@@ -64,7 +64,7 @@ one kind are numbered within the scan, whatever their source; no file name names
 Public datasets overlap: the same CT is in several releases, and one dataset's masks are drawn on another's images.
 A database stores each person once. Where several sources hold the same person or image, their data is **merged**
 into one subject of one dataset: e.g. ENHANCE.PET's CT of an autoPET study, with ENHANCE's segmentation
-(`segmentation-1`) and Atlas's segmentation of the same CT (`segmentation-2`). The dataset lists every source it draws
+(`segmentation-01`) and Atlas's segmentation of the same CT (`segmentation-02`). The dataset lists every source it draws
 from in its `dataset.json`; a source whose data all went into another dataset's scans has no folder of its own.
 
 A database aims at many different people, not at many images of the same person: of the contrast phases,
@@ -92,13 +92,13 @@ Each source (by BoneHub ID) has `name`, `description`, `url`, `paper`, `country`
 `license` (per kind of data), `subsets`, `annotated_labels`, `remarks`.
 
 **subject.json**: `sources` (the subject's ID in each source, by BoneHub ID), `gender` (`M`, `F`, `O`; absent when
-unknown), `remarks`.
+unknown), `race` and `ethnicity` (in the words of the source, where it records them), `remarks`.
 
 **scan.json**: `modality` (a DICOM code: `CT`, `MR`, `XC`, ...), `age` (years), `weight` (kg), `height` (cm), `bmi`,
 `postmortem`, `days_from_baseline`, `registered_to`, `remarks`. Everything that can change between scans of a person
 is here, not in subject.json.
 
-**image.json**, **segmentation-N.json**, **mesh-N.json**, **nurbs-N.json**: `source` (its BoneHub ID),
+**image.json**, **segmentation-NN.json**, **mesh-NN.json**, **nurbs-NN.json**: `source` (its BoneHub ID),
 `source_scan_id`, and where they apply `subset`, `source_split`, `license`, `remarks`, and `labels` (label -> origin):
 
 ```json
@@ -133,7 +133,7 @@ is here, not in subject.json.
   (an axis stored flipped) or with an origin off by less than half a voxel (header rounding) is written again on the
   image grid at conversion, which moves no label; a mask on any other grid fails the subject.
 - **Meshes** (`.stl`) and **NURBS surfaces** (`.iges`, `.step`) are in the physical space of the image, in LPS and
-  millimetres, one file per label and file type. A scan keeps them in `mesh-N/` and `nurbs-N/`; the zips of these
+  millimetres, one file per label and file type. A scan keeps them in `mesh-NN/` and `nurbs-NN/`; the zips of these
   folders are what gets published. A scan without an image (e.g. of a source that publishes only meshes) has meshes in
   the coordinates its source gives.
 
@@ -184,10 +184,10 @@ from bonehub_format import Database
 database = Database("path/to/database")
 for scan in database.scans():
     print(scan.key, scan.info.modality, scan.subject.info.gender, scan.image_path, scan.sources)
-    for segmentation in scan.files("segmentation"):  # segmentation-1.nrrd, segmentation-2.nrrd, ...
+    for segmentation in scan.files("segmentation"):  # segmentation-01.nrrd, segmentation-02.nrrd, ...
         print(segmentation.path, segmentation.source, segmentation.labels, segmentation.license())
     for mesh in scan.files("mesh"):
-        for label, files in mesh.model_files().items():  # from mesh-N/, or its zip
+        for label, files in mesh.model_files().items():  # from mesh-NN/, or its zip
             stl_bytes = files[0].read_bytes()
 ```
 
@@ -202,7 +202,7 @@ from bonehub_format import Database, update_model_files, update_segmentation
 
 scan = Database("path/to/database").dataset(1).subject(1).scan(1)
 
-# Add or replace the labels a model segmented, in segmentation-1. The mask holds LabelMap values on the grid of the
+# Add or replace the labels a model segmented, in segmentation-01. The mask holds LabelMap values on the grid of the
 # scan's image; where it overlaps another label, overlap="replace" (the default) or "keep" decides which keeps the voxel.
 update_segmentation(scan, "patella_mask.nii.gz", origin="model:MyModel@1.0", number=1)
 update_segmentation(scan, remove=["PATELLA_LEFT"], number=1)
@@ -308,8 +308,8 @@ python -m bonehub_format upload DATABASE --repo-id BoneHub/<database>
   `--webpage-options options.json` to set its subtitle, About and Contact sections, and analytics snippet (see
   `bonehub_format.webpage.build_webpage`).
 
-`upload` sends the database to HuggingFace without `upload.md`, the logs, the per-label model folders (their zips
-are uploaded) and every file whose license is restricted or not known. Use it rather than `hf upload`, which does not read
+`upload` sends the database to HuggingFace without `upload.md`, the logs, the webpage (it goes to GitHub Pages), the
+per-label model folders (their zips are uploaded) and every file whose license is restricted or not known. Use it rather than `hf upload`, which does not read
 `.gitignore`. Once the repository is public, add it to the [Harmonized Databases](https://huggingface.co/collections/BoneHub/harmonized-databases) collection.
 
 Other commands: `validate DATABASE [--publishing]`, `pack DATABASE`, `unpack DATABASE` (extract the zips of a
@@ -318,7 +318,7 @@ pass `--registry path/to/registry.json` to use a local copy, or `validate --regi
 
 ## Segmentation files
 
-Masks are stored as NRRD files (`segmentation-N.nrrd`). Voxels hold per-file segment numbers (1, 2, 3 ...), and the
+Masks are stored as NRRD files (`segmentation-NN.nrrd`). Voxels hold per-file segment numbers (1, 2, 3 ...), and the
 header maps each number to its `LabelMap` label (`Segment<i>_Name`, `Segment<i>_LabelValue`) and records its colour
 and bounding box, in the fields 3D Slicer uses for its segmentations (load the file as a *Segmentation* in Slicer's
 Add Data dialog). In Python, `read_segmentation` returns the mask as `LabelMap` values:
@@ -327,7 +327,7 @@ Add Data dialog). In Python, `read_segmentation` returns the mask as `LabelMap` 
 import SimpleITK as sitk, numpy as np
 from bonehub_format import LabelMap, read_segmentation  # needs the [io] extra
 
-mask = read_segmentation("segmentation-1.nrrd")  # SimpleITK image of LabelMap values
+mask = read_segmentation("segmentation-01.nrrd")  # SimpleITK image of LabelMap values
 arr = sitk.GetArrayViewFromImage(mask)
 print([LabelMap(v).name for v in np.unique(arr) if v])
 ```

@@ -78,6 +78,10 @@ class TestDatasetInfo(unittest.TestCase):
 
 
 class TestSubjectInfo(unittest.TestCase):
+    def test_race_and_ethnicity_are_the_words_of_the_source(self):
+        info = SubjectInfo(sources={1: "1"}, gender="F", race="White", ethnicity="Hispanic or Latino")
+        self.assertEqual(info.to_dict(), {"sources": {"1": "1"}, "gender": "F", "race": "White", "ethnicity": "Hispanic or Latino"})
+
     def test_gender(self):
         for value in ("M", "F", "O", None):
             self.assertEqual(SubjectInfo(sources={1: "1"}, gender=value).gender, value)
@@ -187,26 +191,26 @@ class TestLayout(unittest.TestCase):
         x = Path("x")
         self.assertEqual(layout.data_file(x, "image"), x / "image.nii.gz")
         self.assertEqual(layout.data_json(x, "image"), x / "image.json")
-        self.assertEqual(layout.data_file(x, "segmentation", 2), x / "segmentation-2.nrrd")
-        self.assertEqual(layout.data_json(x, "segmentation", 2), x / "segmentation-2.json")
-        self.assertEqual(layout.model_zip(x, "nurbs", 1), x / "nurbs-1.zip")
-        self.assertEqual(layout.model_folder(x, "mesh", 3), x / "mesh-3")
-        for bad in (("image", 1), ("segmentation", None), ("segmentation", 0), ("landmarks", 1)):
+        self.assertEqual(layout.data_file(x, "segmentation", 2), x / "segmentation-02.nrrd")
+        self.assertEqual(layout.data_json(x, "segmentation", 2), x / "segmentation-02.json")
+        self.assertEqual(layout.model_zip(x, "nurbs", 1), x / "nurbs-01.zip")
+        self.assertEqual(layout.model_folder(x, "mesh", 3), x / "mesh-03")
+        for bad in (("image", 1), ("segmentation", None), ("segmentation", 0), ("segmentation", 100), ("landmarks", 1)):
             with self.subTest(file=bad), self.assertRaises(ValueError):
                 layout.data_file(x, *bad)
         entries = {
             "image.nii.gz": ("image", None, "data"),
             "image.json": ("image", None, "json"),
-            "segmentation-1.nrrd": ("segmentation", 1, "data"),
+            "segmentation-01.nrrd": ("segmentation", 1, "data"),
             "segmentation-12.json": ("segmentation", 12, "json"),
-            "mesh-1.zip": ("mesh", 1, "data"),
-            "mesh-1": ("mesh", 1, "folder"),
-            "nurbs-2.json": ("nurbs", 2, "json"),
+            "mesh-01.zip": ("mesh", 1, "data"),
+            "mesh-01": ("mesh", 1, "folder"),
+            "nurbs-02.json": ("nurbs", 2, "json"),
         }
         for name, parsed in entries.items():
             self.assertEqual(layout.parse_scan_entry(name), parsed)
-        for other in ("scan.json", "mesh.zip", "segmentation-1.seg.nrrd", "segmentation-0.nrrd", "segmentation-01.nrrd",
-                      "segmentation-1", "mesh-1.nrrd", "image-1.nii.gz"):
+        for other in ("scan.json", "mesh.zip", "segmentation-01.seg.nrrd", "segmentation-00.nrrd", "segmentation-1.nrrd",
+                      "segmentation-001.nrrd", "segmentation-01", "mesh-01.nrrd", "image-01.nii.gz"):
             self.assertIsNone(layout.parse_scan_entry(other), other)
 
 

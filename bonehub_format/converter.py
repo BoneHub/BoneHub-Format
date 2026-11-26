@@ -18,7 +18,7 @@ dataset of its own; its converter, if it has subjects of its own too, leaves out
 that each person is stored once.
 
 Each data file is written with a JSON file of the same name that names its source: image.nii.gz and image.json, and
-numbered files for the rest (segmentation-1.nrrd and segmentation-1.json, mesh-1/ and mesh-1.json, ...), the converted
+numbered files for the rest (segmentation-01.nrrd and segmentation-01.json, mesh-01/ and mesh-01.json, ...), the converted
 source's own first, then those of the contributions in their order.
 
 Subjects are numbered in the natural order of their source_subject_id (case_2 before case_10), and the scans of a
