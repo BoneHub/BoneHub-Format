@@ -122,7 +122,7 @@ def export_nii_segmentation(
     """
     Converts one or more NIfTI segmentation files to BoneHub standardized labels and saves the result.
     input_label_paths: list of Paths to the original label file(s) in NIfTI format.
-    output_label_path: Path to save the combined label file; written as `.seg.nrrd`.
+    output_label_path: Path to save the combined label file; written as a BoneHub segmentation (`.nrrd`).
     label_mappings: list of dictionaries mapping original labels to BoneHub labels.
                     When multiple files are given, later files take priority over earlier ones in case of overlapping voxels.
     """
@@ -134,7 +134,7 @@ def export_nii_segmentation(
     # the array is a view of its memory.
     sources = []
     for input_label_path, label_mapping in zip(input_label_paths, label_mappings):
-        image = sitk.ReadImage(str(input_label_path))
+        image = read_image(input_label_path)  # TotalSegmentator and CADS files may need their directions orthonormalised
         if ref_image is None:
             ref_image = image
         elif image.GetSize() != ref_image.GetSize() or image.GetOrigin() != ref_image.GetOrigin():
@@ -212,7 +212,7 @@ def export_dicom_segmentation(
     Converts original DICOM labels to BoneHub standardized labels and saves the result.
     input_image_path: Path to the original DICOM image folder.
     input_label_path: Path to the original DICOM label file.
-    output_label_path: Path to save the converted label file; written as `.seg.nrrd`.
+    output_label_path: Path to save the converted label file; written as a BoneHub segmentation (`.nrrd`).
     label_mapping: Dictionary mapping original labels to BoneHub labels.
     dicom_segment_key: Key to access the segment label in the DICOM segmentation file. Options: "SegmentLabel" (default) or "SegmentDescription", depending on how the original labels are stored in the DICOM file.
     """

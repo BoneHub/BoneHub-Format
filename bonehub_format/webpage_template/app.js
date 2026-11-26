@@ -1,879 +1,545 @@
-// Application logic for the datasets and scans tables
+"use strict";
+// The database's webpage: the overview figures and the scan browser, drawn from `site` (data.js, see update_data.py).
 
-const NUMERIC_COLUMN_TOKENS = ['id', 'age', 'weight', 'height', 'bmi'];
+const KINDS = ["image", "segmentation", "mesh", "nurbs"];
+const KIND_NAMES = { image: "Image", segmentation: "Segmentation", mesh: "Mesh", nurbs: "NURBS" };
+const SEX_NAMES = { M: "Male", F: "Female", O: "Other" };
+const SEX_COLORS = { M: "var(--series-male)", F: "var(--series-female)", unknown: "var(--series-unknown)" };
+const PAGE_SIZE = 25;
+// the fields of a scan of site.scans
+const KEY = 0, DATASET = 1, SEX = 2, AGE = 3, MODALITY = 4, LABELS = 5, FILES = 6;
+// the fields of a file of a scan
+const F_KIND = 0, F_NUMBER = 1, F_SIZE = 2, F_PUBLISHED = 3, F_SOURCE = 4, F_LICENSE = 5;
 
-// The table controllers, for the other scripts of the page (coverage.js, datasets.js): window.BoneHubTables.scans has
-// setFilter(description, predicate) to list only the scans a structure or a dataset is chosen for.
-window.BoneHubTables = {};
+const fmt = (n) => Number(n).toLocaleString("en-US");
 
-document.addEventListener('DOMContentLoaded', function() {
-    window.BoneHubTables.datasets = initializeTableController({
-        data: typeof datasetsData !== 'undefined' ? datasetsData : [],
-        itemLabel: 'dataset',
-        itemLabelPlural: 'datasets',
-        emptyMessage: 'No datasets found matching your filters.',
-        noDataMessage: 'No dataset metadata available.',
-        exportFilePrefix: 'datasets',
-        searchInputId: 'datasetSearchInput',
-        clearButtonId: 'clearDatasetFilters',
-        toggleColumnsButtonId: 'toggleDatasetColumns',
-        exportButtonId: 'exportDatasetsCSV',
-        countId: 'datasetCount',
-        columnTogglesId: 'datasetColumnToggles',
-        columnCheckboxesId: 'datasetColumnCheckboxes',
-        tableHeaderId: 'datasetsTableHeader',
-        filterRowId: 'datasetsFilterRow',
-        tableBodyId: 'datasetsTableBody'
-    });
+function compact(n) {
+    if (n < 10000) return fmt(n);
+    if (n < 1e6) return `${(n / 1e3).toFixed(n < 1e5 ? 1 : 0).replace(/\.0$/, "")}K`;
+    return `${(n / 1e6).toFixed(1).replace(/\.0$/, "")}M`;
+}
 
-    window.BoneHubTables.scans = initializeTableController({
-        data: typeof scansData !== 'undefined' ? scansData : [],
-        itemLabel: 'scan',
-        itemLabelPlural: 'scans',
-        emptyMessage: 'No scans found matching your filters.',
-        noDataMessage: 'Dataset not loaded. Please run the update script.',
-        exportFilePrefix: 'scans',
-        searchInputId: 'searchInput',
-        clearButtonId: 'clearFilters',
-        toggleColumnsButtonId: 'toggleColumns',
-        exportButtonId: 'exportCSV',
-        countId: 'scanCount',
-        columnTogglesId: 'columnToggles',
-        columnCheckboxesId: 'columnCheckboxes',
-        tableHeaderId: 'tableHeader',
-        filterRowId: 'filterRow',
-        tableBodyId: 'tableBody'
-    });
+function humanSize(bytes) {
+    if (bytes == null) return "";
+    const units = ["B", "KB", "MB", "GB", "TB"];
+    let value = bytes;
+    let unit = 0;
+    while (value >= 1000 && unit < units.length - 1) {
+        value /= 1000;
+        unit += 1;
+    }
+    return `${value < 10 && unit ? value.toFixed(1) : Math.round(value)} ${units[unit]}`;
+}
+
+function esc(text) {
+    return String(text ?? "").replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
+}
+
+const SIDES = { LEFT: "left", RIGHT: "right" };
+
+function prettyLabel(name) {
+    const words = name.split("_");
+    let side = "";
+    if (SIDES[words[words.length - 1]]) side = ` (${SIDES[words.pop()]})`;
+    const text = words
+        .map((word, i) => (/^[A-Z]?\d+$|^[CTLS]\d+$/.test(word) ? word : i === 0 ? word[0] + word.slice(1).toLowerCase() : word.toLowerCase()))
+        .join(" ");
+    return text + side;
+}
+
+const subjectOf = (scan) => scan[KEY].split("/").slice(0, 2).join("/");
+const registryUrl = (id) => `${site.registry}#dataset=${id}`;
+const fileUrl = (path) => `https://huggingface.co/datasets/${site.repo}/resolve/main/${path}?download=true`;
+const folderUrl = (path) => `https://huggingface.co/datasets/${site.repo}/tree/main/${path}`;
+
+function fileName(kind, number) {
+    if (kind === "image") return "image.nii.gz";
+    if (kind === "segmentation") return `segmentation-${number}.nrrd`;
+    return `${kind}-${number}.zip`;
+}
+
+// ---------------------------------------------------------------------------------------------------------- tooltip
+
+const tooltip = document.getElementById("tooltip");
+
+function placeTooltip(x, y) {
+    const pad = 14;
+    const { width, height } = tooltip.getBoundingClientRect();
+    tooltip.style.left = `${Math.min(x + pad, window.innerWidth - width - 8)}px`;
+    tooltip.style.top = `${y + pad + height > window.innerHeight ? y - height - pad : y + pad}px`;
+}
+
+function showTooltip(target, x, y) {
+    tooltip.innerHTML = target.dataset.tip;
+    tooltip.hidden = false;
+    placeTooltip(x, y);
+}
+
+document.addEventListener("mouseover", (event) => {
+    const target = event.target.closest("[data-tip]");
+    if (target) showTooltip(target, event.clientX, event.clientY);
+});
+document.addEventListener("mousemove", (event) => {
+    if (!tooltip.hidden) placeTooltip(event.clientX, event.clientY);
+});
+document.addEventListener("mouseout", (event) => {
+    const target = event.target.closest("[data-tip]");
+    if (target && !target.contains(event.relatedTarget)) tooltip.hidden = true;
+});
+document.addEventListener("focusin", (event) => {
+    const target = event.target.closest("[data-tip]");
+    if (!target) return;
+    const box = target.getBoundingClientRect();
+    showTooltip(target, box.left, box.bottom);
+});
+document.addEventListener("focusout", () => {
+    tooltip.hidden = true;
 });
 
-function initializeTableController(config) {
-    const state = {
-        ...config,
-        allData: Array.isArray(config.data) ? config.data : [],
-        filteredData: Array.isArray(config.data) ? [...config.data] : [],
-        columnFilters: {},
-        visibleColumns: new Set(),
-        allColumns: [],
-        sortColumn: null,
-        sortDirection: 'asc',
-        isPaginated: config.itemLabel === 'scan',
-        pageSize: config.itemLabel === 'scan' ? 200 : 0,
-        currentPage: 1,
-        filterDebounceMs: config.itemLabel === 'scan' ? 120 : 0,
-        filterTimer: null,
-        cellValueCache: new WeakMap(),
-        rowSearchCache: new WeakMap(),
-        rowPredicate: null,
-        elements: getTableElements(config)
-    };
+// --------------------------------------------------------------------------------------------------------- overview
 
-    if (!state.elements.headerRow || !state.elements.filterRow || !state.elements.tbody) {
-        return null;
-    }
-
-    // Fields whose name starts with '_' hold data for the page's scripts, not columns.
-    state.allColumns = state.allData.length > 0 ? Object.keys(state.allData[0]).filter(key => !key.startsWith('_')) : [];
-    state.visibleColumns = new Set(state.allColumns);
-
-    buildTableStructure(state);
-    initializeColumnToggles(state);
-    initializePaginationControls(state);
-    renderTable(state);
-    setupEventListeners(state);
-    updateStickyColumnOffsets(state);
-
-    state.setFilter = function(description, predicate) {
-        setRowPredicate(state, description, predicate);
-    };
-    return state;
+function barRows(rows, max, options = {}) {
+    // rows: [{label, value, valueText, tip}]
+    return rows
+        .map(
+            (row) => `<div class="bar-label" title="${esc(row.label)}">${esc(row.label)}</div>
+            <div class="bar-track" tabindex="0" data-tip="${esc(row.tip)}" aria-label="${esc(row.label)}: ${esc(row.valueText ?? fmt(row.value))}">
+                <div class="bar" style="width:${max ? Math.max((row.value / max) * (options.scale ?? 85), row.value ? 0.6 : 0) : 0}%"></div>
+                <span class="bar-value">${esc(row.valueText ?? fmt(row.value))}</span>
+            </div>`
+        )
+        .join("");
 }
 
-function setRowPredicate(state, description, predicate) {
-    state.rowPredicate = predicate || null;
-    const controls = state.elements.searchInput ? state.elements.searchInput.closest('.search-controls') : null;
-    let chip = controls ? controls.parentElement.querySelector('.filter-chip') : null;
-    if (predicate && controls) {
-        if (!chip) {
-            chip = document.createElement('div');
-            chip.className = 'filter-chip';
-            chip.setAttribute('role', 'status');
-            controls.insertAdjacentElement('afterend', chip);
-        }
-        chip.innerHTML = '';
-        const text = document.createElement('span');
-        text.textContent = `Showing ${state.itemLabelPlural} with: ${description}`;
-        const remove = document.createElement('button');
-        remove.type = 'button';
-        remove.className = 'filter-chip-remove';
-        remove.setAttribute('aria-label', `Remove the filter: ${description}`);
-        remove.textContent = '×';
-        remove.addEventListener('click', function() {
-            setRowPredicate(state, null, null);
-        });
-        chip.appendChild(text);
-        chip.appendChild(remove);
-    } else if (chip) {
-        chip.remove();
-    }
-    applyFilters(state, true);
-}
-
-function getTableElements(config) {
-    const tbody = document.getElementById(config.tableBodyId);
-    return {
-        searchInput: document.getElementById(config.searchInputId),
-        clearButton: document.getElementById(config.clearButtonId),
-        toggleColumnsButton: document.getElementById(config.toggleColumnsButtonId),
-        exportButton: document.getElementById(config.exportButtonId),
-        countElement: document.getElementById(config.countId),
-        columnToggles: document.getElementById(config.columnTogglesId),
-        columnCheckboxes: document.getElementById(config.columnCheckboxesId),
-        headerRow: document.getElementById(config.tableHeaderId),
-        filterRow: document.getElementById(config.filterRowId),
-        tbody: tbody,
-        tableContainer: tbody ? tbody.closest('.table-container') : null,
-        paginationContainer: null
-    };
-}
-
-function initializePaginationControls(state) {
-    if (!state.isPaginated || !state.elements.tableContainer) {
-        return;
-    }
-
-    const paginationContainer = document.createElement('div');
-    paginationContainer.className = 'table-pagination';
-    paginationContainer.setAttribute('aria-label', `${state.itemLabel} pagination`);
-    state.elements.tableContainer.insertAdjacentElement('afterend', paginationContainer);
-    state.elements.paginationContainer = paginationContainer;
-}
-
-function buildTableStructure(state) {
-    const { headerRow, filterRow } = state.elements;
-
-    headerRow.innerHTML = '';
-    filterRow.innerHTML = '';
-
-    if (state.allColumns.length === 0) {
-        return;
-    }
-
-    state.allColumns.forEach((column, index) => {
-        const th = document.createElement('th');
-        th.textContent = column;
-        th.dataset.column = column;
-        th.dataset.columnIndex = index;
-        th.classList.add('sortable');
-        th.addEventListener('click', function() {
-            handleSort(state, column);
-        });
-        headerRow.appendChild(th);
-
-        const td = document.createElement('td');
-        td.dataset.column = column;
-        td.dataset.columnIndex = index;
-
-        const input = document.createElement('input');
-        input.type = 'text';
-        input.className = 'filter-input';
-        input.dataset.column = column;
-
-        if (isNumericColumn(column)) {
-            input.placeholder = 'e.g., >100 or <50';
-            input.title = 'Supports: >, <, >=, <=, = followed by a number';
-        } else {
-            input.placeholder = `Filter ${column}...`;
-        }
-
-        input.addEventListener('input', function(event) {
-            handleColumnFilter(state, column, event.target.value);
-        });
-
-        td.appendChild(input);
-        filterRow.appendChild(td);
-    });
-
-    applyColumnVisibility(state);
-    updateSortIndicators(state);
-}
-
-function initializeColumnToggles(state) {
-    const container = state.elements.columnCheckboxes;
-    if (!container) {
-        return;
-    }
-
-    container.innerHTML = '';
-
-    state.allColumns.forEach(column => {
-        const div = document.createElement('div');
-        div.className = 'column-checkbox';
-
-        const checkbox = document.createElement('input');
-        checkbox.type = 'checkbox';
-        checkbox.id = `${state.itemLabel}-col-${slugify(column)}`;
-        checkbox.checked = state.visibleColumns.has(column);
-        checkbox.dataset.column = column;
-
-        const label = document.createElement('label');
-        label.htmlFor = checkbox.id;
-        label.textContent = column;
-
-        checkbox.addEventListener('change', function() {
-            if (this.checked) {
-                state.visibleColumns.add(column);
-            } else {
-                state.visibleColumns.delete(column);
-            }
-            applyColumnVisibility(state);
-        });
-
-        div.appendChild(checkbox);
-        div.appendChild(label);
-        container.appendChild(div);
-    });
-}
-
-function setupEventListeners(state) {
-    const {
-        searchInput,
-        clearButton,
-        toggleColumnsButton,
-        exportButton,
-        columnToggles,
-        filterRow
-    } = state.elements;
-
-    if (searchInput) {
-        searchInput.addEventListener('input', function() {
-            scheduleApplyFilters(state, true);
-        });
-    }
-
-    if (clearButton) {
-        clearButton.addEventListener('click', function() {
-            if (searchInput) {
-                searchInput.value = '';
-            }
-
-            Array.from(filterRow.querySelectorAll('.filter-input')).forEach(input => {
-                input.value = '';
-            });
-
-            state.columnFilters = {};
-            setRowPredicate(state, null, null);
-        });
-    }
-
-    if (toggleColumnsButton && columnToggles) {
-        toggleColumnsButton.addEventListener('click', function() {
-            columnToggles.style.display = columnToggles.style.display === 'none' ? 'block' : 'none';
-        });
-    }
-
-    if (exportButton) {
-        exportButton.addEventListener('click', function() {
-            exportToCSV(state);
-        });
-    }
-
-    window.addEventListener('resize', function() {
-        updateStickyColumnOffsets(state);
-    });
-}
-
-function handleSort(state, column) {
-    if (state.sortColumn === column) {
-        state.sortDirection = state.sortDirection === 'asc' ? 'desc' : 'asc';
-    } else {
-        state.sortColumn = column;
-        state.sortDirection = 'asc';
-    }
-
-    sortFilteredData(state);
-    renderTable(state);
-}
-
-function handleColumnFilter(state, column, value) {
-    if (value.trim() === '') {
-        delete state.columnFilters[column];
-    } else {
-        state.columnFilters[column] = value.trim();
-    }
-
-    scheduleApplyFilters(state, true);
-}
-
-function scheduleApplyFilters(state, resetPage) {
-    if (!state.filterDebounceMs) {
-        applyFilters(state, resetPage);
-        return;
-    }
-
-    if (state.filterTimer) {
-        clearTimeout(state.filterTimer);
-    }
-
-    state.filterTimer = setTimeout(function() {
-        applyFilters(state, resetPage);
-    }, state.filterDebounceMs);
-}
-
-function applyFilters(state, resetPage) {
-    if (state.filterTimer) {
-        clearTimeout(state.filterTimer);
-        state.filterTimer = null;
-    }
-
-    const searchTerm = state.elements.searchInput ? state.elements.searchInput.value.toLowerCase() : '';
-    const preparedColumnFilters = Object.entries(state.columnFilters).map(([column, filterValue]) => {
-        const numericComparison = isNumericColumn(column) ? parseNumericComparison(filterValue) : null;
-        return {
-            column,
-            filterValue: filterValue.toLowerCase(),
-            numericComparison
-        };
-    });
-
-    state.filteredData = state.allData.filter(row => {
-        if (state.rowPredicate && !state.rowPredicate(row)) {
-            return false;
-        }
-
-        for (const { column, filterValue, numericComparison } of preparedColumnFilters) {
-            const cellValue = getCachedCellValue(state, row, column);
-
-            if (numericComparison) {
-                if (!applyNumericFilter(cellValue, numericComparison)) {
-                    return false;
-                }
-                continue;
-            }
-
-            if (!cellValue.includes(filterValue)) {
-                return false;
-            }
-        }
-
-        if (searchTerm) {
-            const rowText = getCachedRowSearchText(state, row);
-            if (!rowText.includes(searchTerm)) {
-                return false;
-            }
-        }
-
-        return true;
-    });
-
-    if (resetPage && state.isPaginated) {
-        state.currentPage = 1;
-    }
-
-    sortFilteredData(state);
-    renderTable(state);
-}
-
-function sortFilteredData(state) {
-    if (!state.sortColumn) {
-        return;
-    }
-
-    state.filteredData.sort((a, b) => {
-        const result = compareValues(a, b, state.sortColumn);
-        return state.sortDirection === 'asc' ? result : -result;
-    });
-}
-
-function renderTable(state) {
-    const { tbody } = state.elements;
-    tbody.innerHTML = '';
-
-    if (state.allColumns.length === 0) {
-        showTableMessage(state, state.noDataMessage);
-        updateStats(state);
-        return;
-    }
-
-    const rowsToRender = getRowsForCurrentPage(state);
-
-    if (rowsToRender.length === 0) {
-        showTableMessage(state, state.emptyMessage, state.allColumns.length);
-    } else {
-        rowsToRender.forEach(row => {
-            const tr = document.createElement('tr');
-
-            state.allColumns.forEach((column, index) => {
-                const td = document.createElement('td');
-                td.dataset.column = column;
-                td.dataset.columnIndex = index;
-
-                if (isLinkColumn(column)) {
-                    td.innerHTML = createLinkButtons(row[column]);
-                } else if (shouldUseExpandableCell(state, column, row[column])) {
-                    td.appendChild(createExpandableCellContent(row[column]));
-                } else {
-                    td.textContent = formatCellValue(row[column]);
-                }
-
-                tr.appendChild(td);
-            });
-
-            tbody.appendChild(tr);
-        });
-    }
-
-    applyColumnVisibility(state);
-    updateSortIndicators(state);
-    updateStats(state);
-    renderPaginationControls(state);
-    updateStickyColumnOffsets(state);
-}
-
-function getRowsForCurrentPage(state) {
-    if (!state.isPaginated) {
-        return state.filteredData;
-    }
-
-    const totalRows = state.filteredData.length;
-    if (totalRows === 0) {
-        return [];
-    }
-
-    const totalPages = Math.max(1, Math.ceil(totalRows / state.pageSize));
-    if (state.currentPage > totalPages) {
-        state.currentPage = totalPages;
-    }
-
-    const startIndex = (state.currentPage - 1) * state.pageSize;
-    const endIndex = Math.min(startIndex + state.pageSize, totalRows);
-    return state.filteredData.slice(startIndex, endIndex);
-}
-
-function renderPaginationControls(state) {
-    const container = state.elements.paginationContainer;
-    if (!state.isPaginated || !container) {
-        return;
-    }
-
-    const totalRows = state.filteredData.length;
-    const totalPages = Math.max(1, Math.ceil(totalRows / state.pageSize));
-    if (state.currentPage > totalPages) {
-        state.currentPage = totalPages;
-    }
-
-    const start = totalRows === 0 ? 0 : (state.currentPage - 1) * state.pageSize + 1;
-    const end = Math.min(state.currentPage * state.pageSize, totalRows);
-
-    container.innerHTML = [
-        `<div class="table-pagination-summary">Rows ${start}-${end} of ${totalRows}</div>`,
-        '<div class="table-pagination-controls">',
-        `  <label for="${state.itemLabel}-page-size">Rows per page</label>`,
-        `  <select id="${state.itemLabel}-page-size">`,
-        `    ${[100, 200, 500, 1000].map(size => `<option value="${size}"${size === state.pageSize ? ' selected' : ''}>${size}</option>`).join('')}`,
-        '  </select>',
-        `  <button type="button" class="btn-secondary table-page-btn" data-action="prev"${state.currentPage <= 1 ? ' disabled' : ''}>Prev</button>`,
-        `  <span class="table-pagination-page">Page ${state.currentPage} / ${totalPages}</span>`,
-        `  <button type="button" class="btn-secondary table-page-btn" data-action="next"${state.currentPage >= totalPages ? ' disabled' : ''}>Next</button>`,
-        '</div>'
-    ].join('');
-
-    const pageSizeSelect = container.querySelector(`#${state.itemLabel}-page-size`);
-    if (pageSizeSelect) {
-        pageSizeSelect.addEventListener('change', function(event) {
-            const nextPageSize = parseInt(event.target.value, 10);
-            if (!Number.isNaN(nextPageSize) && nextPageSize > 0) {
-                state.pageSize = nextPageSize;
-                state.currentPage = 1;
-                renderTable(state);
-            }
-        });
-    }
-
-    Array.from(container.querySelectorAll('.table-page-btn')).forEach(button => {
-        button.addEventListener('click', function(event) {
-            const action = event.target.dataset.action;
-            if (action === 'prev' && state.currentPage > 1) {
-                state.currentPage -= 1;
-                renderTable(state);
-            }
-
-            if (action === 'next' && state.currentPage < totalPages) {
-                state.currentPage += 1;
-                renderTable(state);
-            }
-        });
-    });
-}
-
-function applyColumnVisibility(state) {
-    const { headerRow, filterRow, tbody } = state.elements;
-
-    Array.from(headerRow.children).forEach((th, index) => {
-        toggleColumnVisibility(th, state.visibleColumns.has(state.allColumns[index]));
-    });
-
-    Array.from(filterRow.children).forEach((td, index) => {
-        toggleColumnVisibility(td, state.visibleColumns.has(state.allColumns[index]));
-    });
-
-    Array.from(tbody.children).forEach(tr => {
-        // The empty-state row is a single cell spanning all columns, not column 0
-        if (tr.querySelector('.empty-state')) {
-            return;
-        }
-
-        Array.from(tr.children).forEach((td, index) => {
-            toggleColumnVisibility(td, state.visibleColumns.has(state.allColumns[index]));
-        });
-    });
-}
-
-function toggleColumnVisibility(element, isVisible) {
-    if (!element) {
-        return;
-    }
-
-    if (isVisible) {
-        element.classList.remove('column-hidden');
-    } else {
-        element.classList.add('column-hidden');
-    }
-}
-
-function updateStickyColumnOffsets(state) {
-    const { headerRow, tbody } = state.elements;
-    const firstHeaderCell = headerRow ? headerRow.children[0] : null;
-    const secondHeaderCell = headerRow ? headerRow.children[1] : null;
-    const firstColumnWidth = firstHeaderCell && !firstHeaderCell.classList.contains('column-hidden')
-        ? firstHeaderCell.offsetWidth
-        : 0;
-    const secondColumnWidth = secondHeaderCell && !secondHeaderCell.classList.contains('column-hidden')
-        ? secondHeaderCell.offsetWidth
-        : 0;
-
-    const table = headerRow ? headerRow.closest('table') : null;
-    if (!table) {
-        return;
-    }
-
-    table.style.setProperty('--sticky-first-column-width', `${firstColumnWidth}px`);
-    table.style.setProperty('--sticky-second-column-width', `${secondColumnWidth}px`);
-
-    // Skip the empty-state row: its full-width cell would be measured as column 0
-    if (tbody && tbody.children.length > 0 && !tbody.querySelector('.empty-state')) {
-        const firstRow = tbody.children[0];
-        const firstCell = firstRow.children[0];
-        const secondCell = firstRow.children[1];
-
-        if (firstCell && !firstCell.classList.contains('column-hidden')) {
-            table.style.setProperty('--sticky-first-column-width', `${firstCell.offsetWidth}px`);
-        }
-
-        if (secondCell && !secondCell.classList.contains('column-hidden')) {
-            table.style.setProperty('--sticky-second-column-width', `${secondCell.offsetWidth}px`);
+function renderOverview() {
+    const scans = site.scans;
+    const subjects = new Map();
+    for (const scan of scans) if (!subjects.has(subjectOf(scan))) subjects.set(subjectOf(scan), scan[SEX]);
+    const sources = new Set(site.datasets.flatMap((d) => d.sources.map((s) => s[0])));
+    let publishedBytes = 0;
+    let files = 0;
+    let restricted = 0;
+    for (const scan of scans) {
+        for (const file of scan[FILES]) {
+            files += 1;
+            if (file[F_PUBLISHED]) publishedBytes += file[F_SIZE] || 0;
+            else restricted += 1;
         }
     }
-}
+    const segmented = new Set(scans.flatMap((scan) => scan[LABELS]));
 
-function updateSortIndicators(state) {
-    const { headerRow } = state.elements;
-
-    Array.from(headerRow.children).forEach(th => {
-        th.classList.remove('sort-asc', 'sort-desc', 'sort-active');
-        if (th.dataset.column === state.sortColumn) {
-            th.classList.add('sort-active');
-            th.classList.add(state.sortDirection === 'asc' ? 'sort-asc' : 'sort-desc');
-        }
-    });
-}
-
-function updateStats(state) {
-    const { countElement } = state.elements;
-    if (!countElement) {
-        return;
-    }
-
-    if (state.allColumns.length === 0) {
-        countElement.textContent = `No ${state.itemLabelPlural} available`;
-        return;
-    }
-
-    if (state.isPaginated) {
-        const totalFiltered = state.filteredData.length;
-        if (totalFiltered === 0) {
-            countElement.textContent = `Showing 0 of ${state.allData.length} ${state.itemLabelPlural}`;
-            return;
-        }
-
-        const start = (state.currentPage - 1) * state.pageSize + 1;
-        const end = Math.min(state.currentPage * state.pageSize, totalFiltered);
-        countElement.textContent = `Showing ${start}-${end} of ${totalFiltered} filtered (${state.allData.length} total ${state.itemLabelPlural})`;
-        return;
-    }
-
-    countElement.textContent = `Showing ${state.filteredData.length} of ${state.allData.length} ${state.itemLabelPlural}`;
-}
-
-function showTableMessage(state, message, colspan) {
-    const tr = document.createElement('tr');
-    const td = document.createElement('td');
-    td.className = 'empty-state';
-    td.textContent = message;
-    td.colSpan = colspan || 1;
-    tr.appendChild(td);
-    state.elements.tbody.appendChild(tr);
-}
-
-function exportToCSV(state) {
-    if (state.filteredData.length === 0) {
-        alert(`No ${state.itemLabelPlural} to export. Please adjust your filters.`);
-        return;
-    }
-
-    const columnsToExport = state.allColumns.filter(column => state.visibleColumns.has(column));
-    let csvContent = '';
-
-    csvContent += columnsToExport.map(column => `"${column}"`).join(',') + '\n';
-
-    state.filteredData.forEach(row => {
-        const rowData = columnsToExport.map(column => {
-            let value = formatCellValue(row[column]).replace(/"/g, '""');
-            return `"${value}"`;
-        });
-        csvContent += rowData.join(',') + '\n';
-    });
-
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-    const link = document.createElement('a');
-    const url = URL.createObjectURL(blob);
-
-    link.setAttribute('href', url);
-    link.setAttribute('download', `${state.exportFilePrefix}_${new Date().toISOString().split('T')[0]}.csv`);
-    link.style.visibility = 'hidden';
-
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
-}
-
-function normalizeSortValue(value) {
-    if (value === null || value === undefined) {
-        return '';
-    }
-    return String(value).trim();
-}
-
-function compareValues(a, b, column) {
-    const valueA = normalizeSortValue(a[column]);
-    const valueB = normalizeSortValue(b[column]);
-
-    if (valueA === '' && valueB === '') {
-        return 0;
-    }
-    if (valueA === '') {
-        return 1;
-    }
-    if (valueB === '') {
-        return -1;
-    }
-
-    const numA = parseFloat(valueA);
-    const numB = parseFloat(valueB);
-    const bothNumeric = !Number.isNaN(numA) && !Number.isNaN(numB) && /^-?\d+(\.\d+)?$/.test(valueA) && /^-?\d+(\.\d+)?$/.test(valueB);
-
-    if (bothNumeric) {
-        return numA - numB;
-    }
-
-    return valueA.localeCompare(valueB, undefined, {
-        numeric: true,
-        sensitivity: 'base'
-    });
-}
-
-function formatCellValue(value) {
-    return value === null || value === undefined ? '' : String(value);
-}
-
-function getCachedCellValue(state, row, column) {
-    let rowCache = state.cellValueCache.get(row);
-    if (!rowCache) {
-        rowCache = {};
-        state.cellValueCache.set(row, rowCache);
-    }
-
-    if (!(column in rowCache)) {
-        rowCache[column] = formatCellValue(row[column]).toLowerCase();
-    }
-
-    return rowCache[column];
-}
-
-function getCachedRowSearchText(state, row) {
-    let cachedText = state.rowSearchCache.get(row);
-    if (cachedText !== undefined) {
-        return cachedText;
-    }
-
-    cachedText = state.allColumns.map(column => formatCellValue(row[column])).join(' ').toLowerCase();
-    state.rowSearchCache.set(row, cachedText);
-    return cachedText;
-}
-
-function isLinkColumn(column) {
-    return ['Access Link', 'Related Paper', 'URL', 'Paper', 'Registry'].includes(column);
-}
-
-function parseNumericComparison(filterValue) {
-    const operators = [
-        { regex: /^>=\s*(.+)/, op: '>=' },
-        { regex: /^<=\s*(.+)/, op: '<=' },
-        { regex: /^>\s*(.+)/, op: '>' },
-        { regex: /^<\s*(.+)/, op: '<' },
-        { regex: /^=\s*(.+)/, op: '=' }
+    const kpis = [
+        ["Subjects", compact(subjects.size), "people, each stored once"],
+        ["Scans", compact(scans.length), `${fmt(files)} data files`],
+        ["Datasets", fmt(site.datasets.length), `made from ${fmt(sources.size)} source datasets`],
+        ["Structures segmented", fmt(segmented.size), `in ${new Set([...segmented].map((i) => site.labelSection[i])).size} parts of the body`],
+        ["Data to download", humanSize(publishedBytes), restricted ? `${fmt(restricted)} restricted files not included` : "every file is published"],
     ];
+    document.getElementById("kpis").innerHTML = kpis
+        .map(([label, value, detail]) => `<div class="kpi"><div class="kpi-label">${label}</div><div class="kpi-value">${value}</div><div class="kpi-detail">${detail}</div></div>`)
+        .join("");
 
-    for (const { regex, op } of operators) {
-        const match = filterValue.match(regex);
-        if (match) {
-            const value = parseFloat(match[1]);
-            if (!Number.isNaN(value)) {
-                return { operator: op, value: value };
-            }
+    // What the scans hold
+    const withKind = Object.fromEntries(KINDS.map((kind) => [kind, 0]));
+    for (const scan of scans) for (const kind of new Set(scan[FILES].map((f) => f[F_KIND]))) withKind[kind] += 1;
+    document.getElementById("chart-kinds").innerHTML = barRows(
+        KINDS.map((kind) => ({
+            label: KIND_NAMES[kind],
+            value: withKind[kind],
+            valueText: `${fmt(withKind[kind])} (${scans.length ? Math.round((withKind[kind] / scans.length) * 100) : 0}%)`,
+            tip: `<strong>${KIND_NAMES[kind]}</strong><br>${fmt(withKind[kind])} of ${fmt(scans.length)} scans`,
+        })),
+        scans.length
+    );
+
+    // Datasets
+    document.getElementById("datasets-note").textContent = `Scans per dataset; ${site.datasets.length} datasets made from ${sources.size} source datasets of the BoneHub registry`;
+    const datasets = [...site.datasets].sort((a, b) => b.scans - a.scans);
+    document.getElementById("chart-datasets").innerHTML = barRows(
+        datasets.map((d) => ({
+            label: d.name,
+            value: d.scans,
+            tip: `<strong>${esc(d.folder)}: ${esc(d.name)}</strong><br>${fmt(d.subjects)} subjects, ${fmt(d.scans)} scans<br>Sources: ${d.sources.map((s) => `${s[0]} ${esc(s[1])}`).join("; ")}`,
+        })),
+        datasets.length ? datasets[0].scans : 0
+    );
+
+    // Sex of the subjects: one segmented bar
+    const sexes = { M: 0, F: 0, unknown: 0 };
+    for (const sex of subjects.values()) sexes[sex === "M" || sex === "F" ? sex : "unknown"] += 1;
+    const sexParts = [["M", "Male"], ["F", "Female"], ["unknown", "Not known"]].filter(([key]) => sexes[key]);
+    document.getElementById("chart-sex").innerHTML = `<div class="segmented" role="img" aria-label="${sexParts.map(([k, n]) => `${n}: ${sexes[k]}`).join(", ")}">${sexParts
+        .map(([key, name]) => {
+            const share = sexes[key] / subjects.size;
+            const label = share > 0.12 ? `${Math.round(share * 100)}%` : "";
+            return `<div class="segment${key === "unknown" ? " dark-text" : ""}" style="flex:${sexes[key]};background:${SEX_COLORS[key]}" tabindex="0" data-tip="<strong>${name}</strong><br>${fmt(sexes[key])} subjects (${Math.round(share * 100)}%)">${label}</div>`;
+        })
+        .join("")}</div>
+        <div class="legend">${sexParts.map(([key, name]) => `<span class="legend-item"><span class="swatch" style="background:${SEX_COLORS[key]}"></span>${name} ${fmt(sexes[key])}</span>`).join("")}</div>`;
+
+    // Age at the scan: a histogram of 10-year bins
+    const bins = Array.from({ length: 10 }, (_, i) => ({ from: i * 10, count: 0 }));
+    let known = 0;
+    for (const scan of scans) {
+        if (scan[AGE] == null) continue;
+        known += 1;
+        bins[Math.min(Math.floor(scan[AGE] / 10), 9)].count += 1;
+    }
+    const maxBin = Math.max(1, ...bins.map((b) => b.count));
+    document.getElementById("age-note").textContent = `Scans per 10 years of age; ${fmt(known)} scans with a known age, ${fmt(scans.length - known)} without`;
+    const binName = (b) => (b.from === 90 ? "90 or older" : `${b.from}–${b.from + 9} years`);
+    document.getElementById("chart-age").innerHTML = bins
+        .map(
+            (b) => `<div class="column" tabindex="0" data-tip="<strong>${binName(b)}</strong><br>${fmt(b.count)} scans">
+                <span class="column-value">${b.count ? compact(b.count) : ""}</span>
+                <div class="column-bar" style="height:${(b.count / maxBin) * 85}%"></div></div>`
+        )
+        .join("");
+    document.getElementById("chart-age").insertAdjacentHTML("afterend", `<div class="column-axis">${bins.map((b) => `<span>${b.from === 90 ? "90+" : b.from}</span>`).join("")}</div>`);
+
+    // Imaging modality
+    const modalities = new Map();
+    for (const scan of scans) modalities.set(scan[MODALITY] || "not known", (modalities.get(scan[MODALITY] || "not known") || 0) + 1);
+    const modalityRows = [...modalities.entries()].sort((a, b) => b[1] - a[1]);
+    document.getElementById("chart-modality").innerHTML = barRows(
+        modalityRows.map(([name, count]) => ({ label: name, value: count, tip: `<strong>${esc(name)}</strong><br>${fmt(count)} scans` })),
+        modalityRows.length ? modalityRows[0][1] : 0
+    );
+
+    renderStructures(scans);
+}
+
+function renderStructures(scans) {
+    const perLabel = new Array(site.labels.length).fill(0);
+    const perSection = new Array(site.sections.length).fill(0);
+    for (const scan of scans) {
+        const sections = new Set();
+        for (const label of scan[LABELS]) {
+            perLabel[label] += 1;
+            sections.add(site.labelSection[label]);
         }
+        for (const section of sections) perSection[section] += 1;
     }
+    const labelsOf = site.sections.map(() => []);
+    site.labels.forEach((name, i) => labelsOf[site.labelSection[i]].push(i));
+    const shown = site.sections.map((name, i) => i).filter((i) => perSection[i]);
+    document.getElementById("sections-note").textContent = `Scans with a segmentation of each part of the body; ${site.labels.length} structures in all`;
+    document.getElementById("chart-sections").classList.add("bars-two-columns");
+    const maxSection = Math.max(0, ...perSection);
+    document.getElementById("chart-sections").innerHTML = barRows(
+        shown.map((i) => ({
+            label: site.sections[i],
+            value: perSection[i],
+            tip: `<strong>${esc(site.sections[i])}</strong><br>${fmt(perSection[i])} scans, ${labelsOf[i].length} structures`,
+        })),
+        maxSection
+    );
+    document.getElementById("structure-summary").textContent = `Show all ${site.labels.length} structures`;
 
-    return null;
-}
-
-function applyNumericFilter(cellValue, comparison) {
-    const numericValue = parseFloat(cellValue);
-    if (Number.isNaN(numericValue)) {
-        return false;
-    }
-
-    switch (comparison.operator) {
-        case '>':
-            return numericValue > comparison.value;
-        case '<':
-            return numericValue < comparison.value;
-        case '>=':
-            return numericValue >= comparison.value;
-        case '<=':
-            return numericValue <= comparison.value;
-        case '=':
-            return numericValue === comparison.value;
-        default:
-            return false;
-    }
-}
-
-function isNumericColumn(columnName) {
-    const normalizedColumnWords = columnName
-        .toLowerCase()
-        .replace(/[^a-z0-9]+/g, ' ')
-        .trim()
-        .split(/\s+/)
-        .filter(Boolean);
-
-    return normalizedColumnWords.some(word => NUMERIC_COLUMN_TOKENS.includes(word));
-}
-
-function shouldUseExpandableCell(state, column, value) {
-    if (state.itemLabel !== 'scan') {
-        return false;
-    }
-
-    if (!['Segmentation Available', 'Mesh Available', 'NURBS Available', 'Touching Image Border'].includes(column)) {
-        return false;
-    }
-
-    return getExpandableItems(value).length > 0;
-}
-
-function createExpandableCellContent(value) {
-    const items = getExpandableItems(value);
-    if (items.length === 0) {
-        return document.createTextNode('');
-    }
-
-    const details = document.createElement('details');
-    details.className = 'expandable-cell';
-
-    const summary = document.createElement('summary');
-    summary.className = 'expandable-cell-toggle';
-    summary.textContent = `Show ${items.length} item${items.length === 1 ? '' : 's'}`;
-
-    const content = document.createElement('div');
-    content.className = 'expandable-cell-content';
-
-    const list = document.createElement('ul');
-    list.className = 'expandable-cell-list';
-
-    items.forEach(item => {
-        const listItem = document.createElement('li');
-        listItem.textContent = item;
-        list.appendChild(listItem);
+    const maxLabel = Math.max(1, ...perLabel);
+    const groups = document.getElementById("structure-groups");
+    groups.className = "structure-groups";
+    groups.innerHTML = shown
+        .map(
+            (section) => `<details class="structure-group" data-section="${section}"><summary>${esc(site.sections[section])}<span class="count">${labelsOf[section].length} structures</span></summary><div class="bars">${labelsOf[section]
+                .map((label) => {
+                    const name = prettyLabel(site.labels[label]);
+                    return `<div class="bar-label" data-search="${esc(`${name} ${site.labels[label]}`.toLowerCase())}">${esc(name)}</div>
+                    <div class="bar-track" data-search="${esc(`${name} ${site.labels[label]}`.toLowerCase())}" data-tip="<strong>${esc(name)}</strong> (${esc(site.labels[label])})<br>${fmt(perLabel[label])} scans">
+                        <div class="bar" style="width:${(perLabel[label] / maxLabel) * 85}%"></div><span class="bar-value">${fmt(perLabel[label])}</span></div>`;
+                })
+                .join("")}</div></details>`
+        )
+        .join("");
+    document.getElementById("structure-search").addEventListener("input", (event) => {
+        const query = event.target.value.trim().toLowerCase();
+        for (const group of groups.querySelectorAll(".structure-group")) {
+            let visible = 0;
+            for (const cell of group.querySelectorAll("[data-search]")) {
+                const hit = !query || cell.dataset.search.includes(query);
+                cell.style.display = hit ? "" : "none";
+                if (hit) visible += 1;
+            }
+            group.style.display = visible ? "" : "none";
+            group.open = Boolean(query) && visible > 0;
+        }
     });
-
-    content.appendChild(list);
-    details.appendChild(summary);
-    details.appendChild(content);
-
-    return details;
 }
 
-function getExpandableItems(value) {
-    const items = formatCellValue(value)
-        .split(';')
-        .map(item => item.trim())
-        .filter(Boolean);
-    
-    // Natural sort: numeric-aware, case-insensitive
-    items.sort((a, b) => {
-        return a.localeCompare(b, undefined, {
-            numeric: true,
-            sensitivity: 'base'
+// ------------------------------------------------------------------------------------------------------ scan browser
+
+const state = {
+    datasets: new Set(),
+    modalities: new Set(),
+    sexes: new Set(),
+    kinds: new Set(),
+    published: false,
+    ageMin: null,
+    ageMax: null,
+    structures: [],
+    search: "",
+    sort: { key: "scan", dir: 1 },
+    page: 0,
+};
+let filtered = [];
+
+function scanKinds(scan) {
+    return new Set(scan[FILES].map((f) => f[F_KIND]));
+}
+
+function checkboxGroup(title, name, options) {
+    // options: [{value, label, count}]
+    return `<div class="filter-group"><h3>${title}</h3>${options
+        .map(
+            (o) => `<label class="filter-option"><input type="checkbox" name="${name}" value="${esc(o.value)}">${esc(o.label)}<span class="count">${fmt(o.count)}</span></label>`
+        )
+        .join("")}</div>`;
+}
+
+function renderFilters() {
+    const count = (fn) => {
+        const counts = new Map();
+        for (const scan of site.scans) for (const value of fn(scan)) counts.set(value, (counts.get(value) || 0) + 1);
+        return counts;
+    };
+    const byDataset = count((s) => [s[DATASET]]);
+    const byModality = count((s) => [s[MODALITY] || ""]);
+    const bySex = count((s) => [s[SEX] || ""]);
+    const byKind = count((s) => scanKinds(s));
+    const publishedImages = site.scans.filter((s) => s[FILES].some((f) => f[F_KIND] === "image" && f[F_PUBLISHED])).length;
+    const html = [
+        checkboxGroup("Dataset", "dataset", site.datasets.map((d, i) => ({ value: i, label: d.name, count: byDataset.get(i) || 0 }))),
+        checkboxGroup("Data in the scan", "kind", KINDS.filter((k) => byKind.get(k)).map((k) => ({ value: k, label: KIND_NAMES[k], count: byKind.get(k) }))),
+        `<div class="filter-group"><h3>Access</h3><label class="filter-option"><input type="checkbox" name="published">Image can be downloaded<span class="count">${fmt(publishedImages)}</span></label></div>`,
+        checkboxGroup("Modality", "modality", [...byModality.entries()].sort((a, b) => b[1] - a[1]).map(([m, c]) => ({ value: m, label: m || "not known", count: c }))),
+        checkboxGroup("Sex", "sex", ["F", "M", "O", ""].filter((s) => bySex.get(s)).map((s) => ({ value: s, label: SEX_NAMES[s] || "not known", count: bySex.get(s) }))),
+        `<div class="filter-group"><h3>Age (years)</h3><div class="filter-range"><input type="number" id="age-min" min="0" max="120" placeholder="from" aria-label="Age from">–<input type="number" id="age-max" min="0" max="120" placeholder="to" aria-label="Age to"></div></div>`,
+        `<div class="filter-group"><h3>Segmented structures</h3><input type="text" id="structure-filter" list="structure-options" placeholder="Add a structure" aria-label="Add a structure">
+            <datalist id="structure-options">${site.labels.map((l) => `<option value="${esc(prettyLabel(l))}">`).join("")}</datalist><div class="chips" id="structure-chips"></div></div>`,
+    ];
+    const filters = document.getElementById("filters");
+    filters.innerHTML = html.join("");
+    filters.addEventListener("change", (event) => {
+        const input = event.target;
+        const sets = { dataset: state.datasets, modality: state.modalities, sex: state.sexes, kind: state.kinds };
+        if (sets[input.name]) {
+            const value = input.name === "dataset" ? Number(input.value) : input.value;
+            if (input.checked) sets[input.name].add(value);
+            else sets[input.name].delete(value);
+        } else if (input.name === "published") {
+            state.published = input.checked;
+        }
+        update();
+    });
+    const age = (id, key) =>
+        document.getElementById(id).addEventListener("input", (event) => {
+            state[key] = event.target.value === "" ? null : Number(event.target.value);
+            update();
         });
-    });
-    
-    return items;
-}
-
-function createLinkButtons(linkString) {
-    if (!linkString || !String(linkString).trim()) {
-        return '';
-    }
-
-    const links = String(linkString).split(';').map(link => link.trim()).filter(Boolean);
-    if (links.length === 0) {
-        return '';
-    }
-
-    return links.map((link, index) => {
-        const buttonText = links.length === 1 ? 'Link' : `Link ${index + 1}`;
-        const trackedLink = addBonehubReferral(link);
-        return `<a href="${trackedLink}" target="_blank" rel="noopener noreferrer" class="btn-link">${buttonText}</a>`;
-    }).join(' ');
-}
-
-function addBonehubReferral(link) {
-    try {
-        const url = new URL(link);
-        if (url.protocol === 'http:' || url.protocol === 'https:') {
-            if (!url.searchParams.has('utm_source')) {
-                url.searchParams.set('utm_source', 'bonehub');
-            }
-            return url.toString();
+    age("age-min", "ageMin");
+    age("age-max", "ageMax");
+    const byName = new Map(site.labels.map((l, i) => [prettyLabel(l).toLowerCase(), i]));
+    const structureInput = document.getElementById("structure-filter");
+    structureInput.addEventListener("change", () => {
+        const label = byName.get(structureInput.value.trim().toLowerCase());
+        if (label !== undefined && !state.structures.includes(label)) {
+            state.structures.push(label);
+            renderChips();
+            update();
         }
-    } catch (error) {
-        return link;
+        structureInput.value = "";
+    });
+}
+
+function renderChips() {
+    document.getElementById("structure-chips").innerHTML = state.structures
+        .map((label) => `<button type="button" class="chip" data-label="${label}" aria-label="Remove ${esc(prettyLabel(site.labels[label]))}">${esc(prettyLabel(site.labels[label]))} ×</button>`)
+        .join("");
+}
+
+document.addEventListener("click", (event) => {
+    const chip = event.target.closest(".chip[data-label]");
+    if (!chip) return;
+    state.structures = state.structures.filter((label) => label !== Number(chip.dataset.label));
+    renderChips();
+    update();
+});
+
+function matches(scan, searchLabels, query) {
+    if (state.datasets.size && !state.datasets.has(scan[DATASET])) return false;
+    if (state.modalities.size && !state.modalities.has(scan[MODALITY] || "")) return false;
+    if (state.sexes.size && !state.sexes.has(scan[SEX] || "")) return false;
+    if (state.kinds.size) {
+        const kinds = scanKinds(scan);
+        for (const kind of state.kinds) if (!kinds.has(kind)) return false;
     }
-
-    return link;
+    if (state.published && !scan[FILES].some((f) => f[F_KIND] === "image" && f[F_PUBLISHED])) return false;
+    if (state.ageMin != null && (scan[AGE] == null || scan[AGE] < state.ageMin)) return false;
+    if (state.ageMax != null && (scan[AGE] == null || scan[AGE] > state.ageMax)) return false;
+    if (state.structures.length) {
+        const labels = new Set(scan[LABELS]);
+        for (const label of state.structures) if (!labels.has(label)) return false;
+    }
+    if (query) {
+        const dataset = site.datasets[scan[DATASET]];
+        const text = `${scan[KEY]} ${dataset.name} ${dataset.folder} ${dataset.sources.map((s) => `${s[0]} ${s[1]}`).join(" ")} ${scan[MODALITY] || ""}`.toLowerCase();
+        if (!text.includes(query) && !scan[LABELS].some((label) => searchLabels.has(label))) return false;
+    }
+    return true;
 }
 
-function slugify(value) {
-    return String(value).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+const SORTERS = {
+    scan: (a, b) => a[KEY].localeCompare(b[KEY], "en", { numeric: true }),
+    dataset: (a, b) => site.datasets[a[DATASET]].name.localeCompare(site.datasets[b[DATASET]].name) || SORTERS.scan(a, b),
+    sex: (a, b) => (a[SEX] || "~").localeCompare(b[SEX] || "~") || SORTERS.scan(a, b),
+    age: (a, b) => (a[AGE] ?? 999) - (b[AGE] ?? 999) || SORTERS.scan(a, b),
+    modality: (a, b) => (a[MODALITY] || "~").localeCompare(b[MODALITY] || "~") || SORTERS.scan(a, b),
+    structures: (a, b) => a[LABELS].length - b[LABELS].length || SORTERS.scan(a, b),
+};
+
+function update(keepPage = false) {
+    const query = state.search.trim().toLowerCase();
+    const searchLabels = new Set();
+    if (query.length > 2) site.labels.forEach((l, i) => (prettyLabel(l).toLowerCase().includes(query) || l.toLowerCase().includes(query)) && searchLabels.add(i));
+    filtered = site.scans.filter((scan) => matches(scan, searchLabels, query));
+    const sorter = SORTERS[state.sort.key];
+    filtered.sort((a, b) => state.sort.dir * sorter(a, b));
+    if (!keepPage) state.page = 0;
+    renderRows();
 }
+
+function downloadButtons(scan) {
+    const counts = {};
+    for (const file of scan[FILES]) counts[file[F_KIND]] = (counts[file[F_KIND]] || 0) + 1;
+    return scan[FILES]
+        .map((file) => {
+            const [kind, number, size, published, sourceId, license] = file;
+            const name = fileName(kind, number);
+            const label = `${KIND_NAMES[kind]}${counts[kind] > 1 ? ` ${number}` : ""}`;
+            const source = site.sources[sourceId] || {};
+            const from = `Source: ${sourceId} ${esc(source.name || "")}`;
+            if (published) {
+                const tip = `<strong>${esc(name)}</strong> (${humanSize(size)})<br>${from}<br>License: ${esc(license)}`;
+                return `<a class="dl" href="${fileUrl(`${scan[KEY]}/${name}`)}" download="${esc(name)}" data-tip="${esc(tip)}">${label}<span class="size">${humanSize(size)}</span></a>`;
+            }
+            const tip = `<strong>${esc(name)}</strong> is not in the repository: its license is ${esc(license || "not known")}.<br>${from}: obtain it there.`;
+            const href = source.url || registryUrl(sourceId);
+            return `<a class="dl locked" href="${esc(href)}" target="_blank" rel="noopener noreferrer" data-tip="${esc(tip)}">🔒 ${label}</a>`;
+        })
+        .join("");
+}
+
+function structuresCell(scan) {
+    const labels = scan[LABELS];
+    if (!labels.length) return "–";
+    const names = labels.slice(0, 40).map((l) => esc(prettyLabel(site.labels[l])));
+    const more = labels.length > 40 ? `<br>and ${labels.length - 40} more` : "";
+    return `<span class="structures" tabindex="0" data-tip="${esc(names.join(", ") + more)}">${labels.length}</span>`;
+}
+
+function renderRows() {
+    const pages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+    state.page = Math.min(state.page, pages - 1);
+    const rows = filtered.slice(state.page * PAGE_SIZE, (state.page + 1) * PAGE_SIZE);
+    document.getElementById("result-count").textContent =
+        filtered.length === site.scans.length ? `${fmt(site.scans.length)} scans` : `${fmt(filtered.length)} of ${fmt(site.scans.length)} scans`;
+    document.getElementById("scan-rows").innerHTML = rows.length
+        ? rows
+              .map((scan) => {
+                  const dataset = site.datasets[scan[DATASET]];
+                  const sources = dataset.sources
+                      .map((s) => `<a href="${registryUrl(s[0])}" target="_blank" rel="noopener noreferrer" data-tip="${esc(`<strong>${s[0]}</strong> ${esc(s[1])}<br>Its entry in the BoneHub registry`)}">${s[0]}</a>`)
+                      .join(" · ");
+                  return `<tr>
+                    <td><a class="scan-key" href="${folderUrl(scan[KEY])}" target="_blank" rel="noopener noreferrer" data-tip="Open the scan's folder on Hugging Face">${esc(scan[KEY])}</a></td>
+                    <td><div class="dataset-name">${esc(dataset.name)}</div><div class="dataset-sources">sources ${sources}</div></td>
+                    <td>${SEX_NAMES[scan[SEX]] || "–"}</td>
+                    <td class="num">${scan[AGE] ?? "–"}</td>
+                    <td>${esc(scan[MODALITY] || "–")}</td>
+                    <td class="num">${structuresCell(scan)}</td>
+                    <td><div class="downloads">${downloadButtons(scan)}</div></td>
+                </tr>`;
+              })
+              .join("")
+        : `<tr><td colspan="7" class="empty">No scan matches the filters.</td></tr>`;
+    document.getElementById("pager").innerHTML = `<button type="button" data-page="${state.page - 1}" ${state.page === 0 ? "disabled" : ""}>Previous</button>
+        <span>Page ${fmt(state.page + 1)} of ${fmt(pages)}</span>
+        <button type="button" data-page="${state.page + 1}" ${state.page >= pages - 1 ? "disabled" : ""}>Next</button>`;
+    for (const th of document.querySelectorAll("#scan-table th[data-sort]")) {
+        th.classList.toggle("sorted-asc", th.dataset.sort === state.sort.key && state.sort.dir === 1);
+        th.classList.toggle("sorted-desc", th.dataset.sort === state.sort.key && state.sort.dir === -1);
+    }
+}
+
+function csvCell(value) {
+    const text = String(value ?? "");
+    return /[",\n;]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+}
+
+function exportCsv() {
+    const header = ["scan", "dataset", "dataset_name", "sources", "sex", "age", "modality", "structures", ...KINDS.map((k) => `${k}_files`)];
+    const lines = [header.join(",")];
+    for (const scan of filtered) {
+        const dataset = site.datasets[scan[DATASET]];
+        const urls = KINDS.map((kind) =>
+            scan[FILES]
+                .filter((f) => f[F_KIND] === kind)
+                .map((f) => (f[F_PUBLISHED] ? fileUrl(`${scan[KEY]}/${fileName(kind, f[F_NUMBER])}`) : `restricted (source ${f[F_SOURCE]})`))
+                .join(" ")
+        );
+        lines.push(
+            [scan[KEY], dataset.folder, dataset.name, dataset.sources.map((s) => s[0]).join(" "), scan[SEX] || "", scan[AGE] ?? "", scan[MODALITY] || "",
+                scan[LABELS].map((l) => site.labels[l]).join(" "), ...urls]
+                .map(csvCell)
+                .join(",")
+        );
+    }
+    const blob = new Blob([lines.join("\n") + "\n"], { type: "text/csv" });
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(blob);
+    link.download = "scans.csv";
+    link.click();
+    URL.revokeObjectURL(link.href);
+}
+
+function initBrowser() {
+    renderFilters();
+    document.getElementById("scan-search").addEventListener("input", (event) => {
+        state.search = event.target.value;
+        update();
+    });
+    document.getElementById("clear-filters").addEventListener("click", () => {
+        for (const set of [state.datasets, state.modalities, state.sexes, state.kinds]) set.clear();
+        Object.assign(state, { published: false, ageMin: null, ageMax: null, structures: [], search: "" });
+        for (const input of document.querySelectorAll("#filters input")) input.type === "checkbox" ? (input.checked = false) : (input.value = "");
+        document.getElementById("scan-search").value = "";
+        renderChips();
+        update();
+    });
+    document.getElementById("export-csv").addEventListener("click", exportCsv);
+    document.getElementById("pager").addEventListener("click", (event) => {
+        const button = event.target.closest("button[data-page]");
+        if (!button || button.disabled) return;
+        state.page = Number(button.dataset.page);
+        renderRows();
+        document.getElementById("scan-table").scrollIntoView({ block: "start", behavior: "smooth" });
+    });
+    for (const th of document.querySelectorAll("#scan-table th[data-sort]")) {
+        th.addEventListener("click", () => {
+            const key = th.dataset.sort;
+            state.sort = { key, dir: state.sort.key === key ? -state.sort.dir : 1 };
+            update(true);
+        });
+    }
+    update();
+}
+
+function renderFooter() {
+    const repo = `https://huggingface.co/datasets/${site.repo}`;
+    document.getElementById("footer-text").innerHTML = `Data as of ${esc(site.updated)}. Each file keeps the license of its source dataset: see
+        <a href="${repo}/blob/main/LICENSE.md" target="_blank" rel="noopener noreferrer">LICENSE.md</a>, and cite the source datasets you use.`;
+}
+
+renderOverview();
+initBrowser();
+renderFooter();

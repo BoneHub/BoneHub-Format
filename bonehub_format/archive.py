@@ -1,8 +1,7 @@
-"""The zips in which a scan's per-label model files are published: mesh.ds-0040.zip, nurbs.ds-0040.zip, ...
+"""The zips in which a scan's per-label model files are published: mesh-1.zip, nurbs-1.zip, ...
 
-A scan keeps the model files each provider gave it in folders named after the kind and the provider (mesh.ds-0040/,
-nurbs.ds-0040/), one file per label and file type. pack() writes each folder into a zip of the same name; the zips are
-published and the folders are not. unpack() does the reverse for a downloaded copy. A zip is rewritten only when its
+A scan keeps its model files in numbered folders of their kind (mesh-1/, nurbs-1/), one file per label and file
+type. pack() writes each folder into a zip of the same name; the zips are published and the folders are not. unpack() does the reverse for a downloaded copy. A zip is rewritten only when its
 folder has changed, and the same files always give the same zip.
 """
 
@@ -53,19 +52,19 @@ def zip_is_current(folder: Path, zip_path: Path, kind: str) -> bool:
 
 
 def model_entries(scan_folder: Path) -> list[tuple[str, int, Path, Path]]:
-    """(kind, provider dataset ID, folder, zip) for every model folder or zip of a scan, in name order."""
+    """(kind, number, folder, zip) for every model folder or zip of a scan, in order."""
     found = {}
     for entry in Path(scan_folder).iterdir():
         parsed = layout.parse_scan_entry(entry.name)
-        if parsed is None or parsed[0] == "segmentation":
+        if parsed is None or parsed[0] not in layout.MODEL_KINDS or parsed[2] == "json":
             continue
-        kind, dataset_id, _ = parsed
-        found[(kind, dataset_id)] = (layout.model_folder(scan_folder, kind, dataset_id), layout.model_zip(scan_folder, kind, dataset_id))
-    return [(kind, dataset_id, *paths) for (kind, dataset_id), paths in sorted(found.items())]
+        kind, number, _ = parsed
+        found[(kind, number)] = (layout.model_folder(scan_folder, kind, number), layout.model_zip(scan_folder, kind, number))
+    return [(kind, number, *paths) for (kind, number), paths in sorted(found.items())]
 
 
 def pack_folder(folder: Path, kind: str) -> bool:
-    """Write <folder>.zip from a model folder (e.g. mesh.ds-0040/) unless it is current; return True if it was written.
+    """Write <folder>.zip from a model folder (e.g. mesh-1/) unless it is current; return True if it was written.
 
     An empty or missing folder leaves no zip.
     """

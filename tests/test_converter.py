@@ -31,29 +31,31 @@ class ConvertedDataset(unittest.TestCase):
 
     def test_subjects_are_numbered_in_natural_order_of_source_id(self):
         dataset = Database(self.root).dataset(3)
-        self.assertEqual([s.info.source_subject_id(3) for s in dataset.subjects()], ["case_1", "case_2", "case_10"])
-        self.assertEqual([scan.info.source_scan_id() for scan in dataset.subject(2).scans()], ["case_2/ct", "case_2/mr"])
+        self.assertEqual([s.info.source_subject_id(support.SOURCE_ID) for s in dataset.subjects()], ["case_1", "case_2", "case_10"])
+        self.assertEqual([scan.image.info.source_scan_id for scan in dataset.subject(2).scans()], ["case_2/ct", "case_2/mr"])
         self.assertEqual(natural_key("case_2") < natural_key("case_10"), True)
 
     def test_layout_and_metadata(self):
         scan_folder = self.root / "ds-0003" / "sub-000002" / "scan-02"
         self.assertEqual(
             sorted(p.name for p in scan_folder.iterdir()),
-            ["image.nii.gz", "mesh.ds-0003", "mesh.ds-0003.zip", "scan.json", "segmentation.ds-0003.seg.nrrd"],
+            ["image.json", "image.nii.gz", "mesh-1", "mesh-1.json", "mesh-1.zip", "scan.json", "segmentation-1.json",
+             "segmentation-1.nrrd"],
         )
         info = json.loads((scan_folder / "scan.json").read_text())
-        self.assertEqual(info["image"], "ds-0003")
-        provider = info["providers"]["ds-0003"]
-        self.assertEqual(provider["source_scan_id"], "case_2/mr")
-        self.assertEqual(provider["segmentation"], {"FEMUR_LEFT": "source", "FEMUR_RIGHT": "source"})
-        self.assertEqual(provider["mesh"], {"FEMUR_LEFT": "derived:test-mesher@1.0"})
-        self.assertEqual(info["registered_to"], "scan-01")
+        self.assertEqual(info, {"modality": "CT", "age": 60, "registered_to": "scan-01"})
+        self.assertEqual(json.loads((scan_folder / "image.json").read_text()), {"source": 3, "source_scan_id": "case_2/mr"})
+        segmentation = json.loads((scan_folder / "segmentation-1.json").read_text())
+        self.assertEqual(segmentation["labels"], {"FEMUR_LEFT": "source", "FEMUR_RIGHT": "source"})
+        mesh = json.loads((scan_folder / "mesh-1.json").read_text())
+        self.assertEqual(mesh, {"source": 3, "source_scan_id": "case_2/mr", "labels": {"FEMUR_LEFT": "derived:test-mesher@1.0"}})
         subject = json.loads((self.root / "ds-0003" / "sub-000002" / "subject.json").read_text())
-        self.assertEqual(subject, {"sources": {"ds-0003": "case_2"}, "gender": "F"})
-        self.assertNotIn("subject_id", info)  # the folder name is the ID
+        self.assertEqual(subject, {"sources": {"3": "case_2"}, "gender": "F"})
         dataset_info = json.loads((self.root / "ds-0003" / "dataset.json").read_text())
         self.assertEqual(dataset_info["schema_version"], "1.0")
-        self.assertEqual(dataset_info["annotated_labels"], ["FEMUR_LEFT", "FEMUR_RIGHT"])
+        self.assertEqual(dataset_info["name"], "Synthetic")
+        self.assertEqual(list(dataset_info["sources"]), ["3"])
+        self.assertEqual(dataset_info["sources"]["3"]["annotated_labels"], ["FEMUR_LEFT", "FEMUR_RIGHT"])
         self.assertTrue(self.log.parent == self.root / layout.LOGS_DIR)
 
     def test_integer_ct_is_stored_as_int16(self):
@@ -64,16 +66,17 @@ class ConvertedDataset(unittest.TestCase):
 
     def test_mesh_zip_matches_the_folder(self):
         scan = Database(self.root).dataset(3).subject(1).scan(1)
-        with zipfile.ZipFile(scan.path / "mesh.ds-0003.zip") as archive:
+        with zipfile.ZipFile(scan.path / "mesh-1.zip") as archive:
             self.assertEqual(archive.namelist(), ["FEMUR_LEFT.stl"])
-        self.assertEqual(list(scan.model_files("mesh", 3)), ["FEMUR_LEFT"])
+        [mesh] = scan.files("mesh")
+        self.assertEqual(list(mesh.model_files()), ["FEMUR_LEFT"])
 
     def test_validates(self):
         self.assertEqual(validate(self.root), [])
 
 
 class TestMergedScans(unittest.TestCase):
-    """A dataset whose scans hold the segmentation another dataset (the provider) made of the same images."""
+    """A dataset whose scans hold the segmentation another source (the provider) made of the same images."""
 
     @classmethod
     def setUpClass(cls):
@@ -81,33 +84,34 @@ class TestMergedScans(unittest.TestCase):
         source = support.make_source(cls.tmp / "source", {"a": ["ct"], "b": ["ct"]})
         cls.root = cls.tmp / "root"
         support.SyntheticConverter(source, contributions=True).export_to_bonehub_format(cls.root, 3, num_workers=1, verbose=False)
-        support.ProviderConverter(cls.tmp / "provider").export_to_bonehub_format(cls.root, support.PROVIDER_ID, verbose=False)
 
     @classmethod
     def tearDownClass(cls):
         shutil.rmtree(cls.tmp, ignore_errors=True)
 
-    def test_each_provider_has_its_own_files_and_entry(self):
+    def test_each_source_has_its_own_numbered_files(self):
         scan = Database(self.root).dataset(3).subject(1).scan(1)
-        self.assertEqual(scan.provider_ids, [3, support.PROVIDER_ID])
-        self.assertEqual(sorted(scan.segmentation_paths()), [3, support.PROVIDER_ID])
-        self.assertTrue((scan.path / "segmentation.ds-0007.seg.nrrd").is_file())
-        provider = scan.info.provider(support.PROVIDER_ID)
-        self.assertEqual(provider.source_scan_id, "provider-a/ct")
-        self.assertEqual(provider.segmentation, {"FEMUR_LEFT": "model:TestModel@2.0", "GLUTEUS_MAXIMUS_RIGHT": "model:TestModel@2.0"})
-        self.assertEqual(scan.info.labels("segmentation"), ["GLUTEUS_MAXIMUS_RIGHT", "FEMUR_LEFT", "FEMUR_RIGHT"])  # label map order
-        self.assertEqual(scan.info.labels("segmentation", 3), ["FEMUR_LEFT", "FEMUR_RIGHT"])
-        self.assertEqual(scan.info.image, "ds-0003")
-        self.assertEqual(scan.subject.info.sources, {"ds-0003": "a", "ds-0007": "provider-a"})
+        self.assertEqual(scan.sources, [support.SOURCE_ID, support.PROVIDER_ID])
+        first, second = scan.files("segmentation")
+        self.assertEqual((first.path.name, first.source), ("segmentation-1.nrrd", support.SOURCE_ID))
+        self.assertEqual((second.path.name, second.source), ("segmentation-2.nrrd", support.PROVIDER_ID))
+        self.assertEqual(second.info.source_scan_id, "provider-a/ct")
+        self.assertEqual(second.info.labels, {"FEMUR_LEFT": "model:TestModel@2.0", "GLUTEUS_MAXIMUS_RIGHT": "model:TestModel@2.0"})
+        self.assertEqual(scan.labels("segmentation"), ["GLUTEUS_MAXIMUS_RIGHT", "FEMUR_LEFT", "FEMUR_RIGHT"])  # label map order
+        self.assertEqual(first.labels, ["FEMUR_LEFT", "FEMUR_RIGHT"])
+        self.assertEqual(scan.image.source, support.SOURCE_ID)
+        self.assertEqual(scan.subject.info.sources, {support.SOURCE_ID: "a", support.PROVIDER_ID: "provider-a"})
 
-    def test_licenses_follow_the_provider(self):
+    def test_licenses_follow_the_source(self):
         scan = Database(self.root).dataset(3).subject(1).scan(1)
-        self.assertEqual(scan.license("image"), "CC-BY-4.0")
-        self.assertEqual(scan.license("segmentation", 3), "CC-BY-4.0")
-        self.assertEqual(scan.license("segmentation", support.PROVIDER_ID), "CC-BY-NC-4.0")
+        first, second = scan.files("segmentation")
+        self.assertEqual(scan.image.license(), "CC-BY-4.0")
+        self.assertEqual(first.license(), "CC-BY-4.0")
+        self.assertEqual(second.license(), "CC-BY-NC-4.0")
 
-    def test_provider_without_subjects_is_its_dataset_json(self):
-        self.assertEqual(sorted(p.name for p in (self.root / "ds-0007").iterdir()), ["dataset.json"])
+    def test_the_dataset_lists_both_sources_and_no_folder_is_written_for_the_provider(self):
+        self.assertEqual(list(Database(self.root).dataset(3).info.sources), [support.SOURCE_ID, support.PROVIDER_ID])
+        self.assertEqual(sorted(p.name for p in self.root.iterdir()), ["ds-0003", "logs"])
         self.assertEqual(validate(self.root), [])
 
     def _convert_with_moved_labels(self, name: str, move) -> Path:
@@ -133,7 +137,7 @@ class TestMergedScans(unittest.TestCase):
     def _assert_on_the_image_grid(self, root: Path):
         scan = Database(root).dataset(3).subject(1).scan(1)
         image = sitk.ReadImage(str(scan.path / layout.IMAGE_FILE))
-        home, provider = (read_segmentation(scan.segmentation_paths()[i]) for i in (3, support.PROVIDER_ID))
+        home, provider = (read_segmentation(data.path) for data in scan.files("segmentation"))
         for mask in (home, provider):
             self.assertEqual(mask.GetSize(), image.GetSize())
             self.assertEqual(mask.GetOrigin(), image.GetOrigin())
@@ -157,11 +161,16 @@ class TestMergedScans(unittest.TestCase):
 
         self._assert_on_the_image_grid(self._convert_with_moved_labels("nudged", nudge))
 
-    def test_a_provider_missing_from_the_database_is_a_problem(self):
+    def test_a_source_missing_from_dataset_json_is_a_problem(self):
         root = self.tmp / "without-provider"
         shutil.copytree(self.root, root)
-        shutil.rmtree(root / "ds-0007")
-        self.assertTrue(any("provider ds-0007 has no dataset folder" in p for p in validate(root)))
+        dataset_json = root / "ds-0003" / "dataset.json"
+        info = json.loads(dataset_json.read_text())
+        del info["sources"][str(support.PROVIDER_ID)]
+        dataset_json.write_text(json.dumps(info))
+        problems = validate(root)
+        self.assertTrue(any("segmentation-2.json: comes from source 7, which dataset.json does not list" in p for p in problems))
+        self.assertTrue(any("subject.json: names source 7" in p for p in problems))
 
 
 class TestConverterRuns(unittest.TestCase):
@@ -210,7 +219,7 @@ class TestConverterRuns(unittest.TestCase):
         source = support.make_source(self.tmp / "source", {"a": ["ct"]})
         support.SyntheticConverter(source).export_to_bonehub_format(self.root, 1, num_workers=1, verbose=False)
         scan_folder = self.root / "ds-0001" / "sub-000001" / "scan-01"
-        mesh_folder, mesh_zip = scan_folder / "mesh.ds-0001", scan_folder / "mesh.ds-0001.zip"
+        mesh_folder, mesh_zip = scan_folder / "mesh-1", scan_folder / "mesh-1.zip"
         zip_bytes = mesh_zip.read_bytes()
         self.assertEqual(pack(self.root), [])  # up to date
         (mesh_folder / "FEMUR_LEFT.stl").write_bytes(b"solid changed\nendsolid changed\n")
@@ -219,7 +228,7 @@ class TestConverterRuns(unittest.TestCase):
         self.assertEqual(validate(self.root), [])
 
         shutil.rmtree(mesh_folder)  # as downloaded: only the zip
-        self.assertEqual(list(Database(self.root).dataset(1).subject(1).scan(1).model_files("mesh", 1)), ["FEMUR_LEFT"])
+        self.assertEqual(list(Database(self.root).dataset(1).subject(1).scan(1).files("mesh")[0].model_files()), ["FEMUR_LEFT"])
         self.assertEqual(validate(self.root), [])
         self.assertEqual(unpack(self.root), [mesh_folder])
         (mesh_folder / "FEMUR_LEFT.stl").write_bytes(b"solid FEMUR_LEFT\nendsolid FEMUR_LEFT\n")

@@ -1,9 +1,8 @@
 # {{TITLE}}: webpage
 
-The webpage of {{TITLE}}: a static site for GitHub Pages that shows an overview of the database, how to get started
-with it, which structures of the body its scans cover (a skeleton figure, a soft-tissue list and a structure x
-dataset matrix), a card per source dataset with its licenses, and searchable tables of its scans and source datasets.
-Database: {{HF_URL}}
+The webpage of {{TITLE}}: a static site for GitHub Pages that shows an overview of the database (counts, what the
+scans hold, its datasets, sex, age, modality and the structures segmented) and a table of every scan, with filters and
+a direct download link to each of its files on Hugging Face. Database: {{HF_URL}}
 
 ## Publish it
 
@@ -34,11 +33,11 @@ git push
 ```
 
 `update_data.py` reads the index in `../index/` (or the folder you pass it) and needs only pyarrow. It reads
-`structures.json` next to it for the coverage figures; that file comes from the label map of the BoneHub-Format
-package, and `build_webpage` writes it again when the label map changes.
+`structures.json` next to it, the part of the body each label belongs to; that file comes from the label map of the
+BoneHub-Format package, and `build_webpage` writes it again when the label map changes.
 
 ## Change it
 
-`index.html`, `styles.css`, `app.js`, `overview.js`, `coverage.js` and `datasets.js` come from the template of the BoneHub-Format package, and
+`index.html`, `styles.css` and `app.js` come from the template of the BoneHub-Format package, and
 `bonehub_format.webpage.build_webpage` fills in the database's name and links. Running it again replaces them, so to
 keep edits of your own, make them here and afterwards run only `update_data.py`.

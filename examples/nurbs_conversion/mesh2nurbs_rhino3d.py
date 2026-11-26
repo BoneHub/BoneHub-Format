@@ -1,9 +1,9 @@
 """Convert the meshes of BoneHub-format datasets to NURBS surfaces (IGES format) using Rhino3D.
 
-For every scan of each given dataset, each mesh a provider dataset gave it (mesh.ds-NNNN/ or mesh.ds-NNNN.zip) is
-converted with the `mesh2nurbs-rhino3d` CLI and saved as nurbs.ds-NNNN/<LABEL>.iges, next to the meshes of the same
-provider; then scan.json lists the new NURBS surfaces of that provider, with the origin
-derived:mesh2nurbs-rhino3d@<version>, and nurbs.ds-NNNN.zip is brought up to date. The quad remesh edge length is
+For every scan of each given dataset, each mesh of each mesh file (mesh-N/ or mesh-N.zip) is converted with the
+`mesh2nurbs-rhino3d` CLI and saved in the NURBS file of the same source (nurbs-M/<LABEL>.iges, a new one if the scan
+has none from that source); its JSON file then lists the new NURBS surfaces, with the origin
+derived:mesh2nurbs-rhino3d@<version>, and nurbs-M.zip is brought up to date. The quad remesh edge length is
 chosen per bone from its body region (see QUADREMESH_LENGTH_PER_REGION and QUADREMESH_LENGTH_PER_LABEL below).
 
 Requires the `mesh2nurbs-rhino3d` CLI on PATH, e.g. by activating its conda env first (with bonehub-format installed
@@ -11,12 +11,12 @@ in it):
     conda activate mesh2nurbs-rhino3d
 
 Usage:
-    python mesh2nurbs_rhino3d.py 180                    # convert all meshes of dataset 180 (vsd-lower-extremities-seg)
-    python mesh2nurbs_rhino3d.py 180 27 44              # several datasets
-    python mesh2nurbs_rhino3d.py 180 --subjects 1 2     # only some subjects
-    python mesh2nurbs_rhino3d.py 180 --overwrite        # regenerate existing NURBS surfaces
-    python mesh2nurbs_rhino3d.py 180 --dry-run          # print the commands without running them
-    python mesh2nurbs_rhino3d.py 180 --root "/mnt/nas/BoneHub/Harmonized_Databases/MyDatabase" --rhino-path "C:/Program Files/Rhino 8/System/Rhino.exe"
+    python mesh2nurbs_rhino3d.py 7                      # convert all meshes of dataset ds-0007
+    python mesh2nurbs_rhino3d.py 7 1 4                  # several datasets
+    python mesh2nurbs_rhino3d.py 7 --subjects 1 2       # only some subjects
+    python mesh2nurbs_rhino3d.py 7 --overwrite          # regenerate existing NURBS surfaces
+    python mesh2nurbs_rhino3d.py 7 --dry-run            # print the commands without running them
+    python mesh2nurbs_rhino3d.py 7 --root "/mnt/nas/BoneHub/Harmonized_Databases/MyDatabase" --rhino-path "C:/Program Files/Rhino 8/System/Rhino.exe"
 
 Run `python mesh2nurbs_rhino3d.py --help` for all options.
 """
@@ -29,7 +29,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-from bonehub_format import LabelMap, Database, layout, pack_scan, validate
+from bonehub_format import Database, LabeledFileInfo, LabelMap, layout, pack_scan, validate
 from bonehub_format.labelmap import structure_of
 
 DEFAULT_ROOT = Path("/mnt/nas/BoneHub/Harmonized_Databases/MyDatabase")
@@ -96,12 +96,12 @@ def convert_dataset(root: Path, dataset_id: int, args: argparse.Namespace) -> li
         if args.subjects and subject.id not in args.subjects:
             continue
         for scan in subject.scans():
-            with_meshes = [provider for provider in scan.provider_ids if scan.info.labels("mesh", provider)]
-            if not with_meshes:
+            meshes = scan.files("mesh")
+            if not meshes:
                 print(f"[skip] {scan.key}: no meshes")
                 continue
-            for provider_id in with_meshes:
-                failures += convert_provider(scan, provider_id, origin, args)
+            for mesh in meshes:
+                failures += convert_mesh_file(scan, mesh, origin, args)
 
     if not args.dry_run:
         problems = [problem for problem in validate(root) if dataset.path.name in problem]
@@ -111,11 +111,22 @@ def convert_dataset(root: Path, dataset_id: int, args: argparse.Namespace) -> li
     return failures
 
 
-def convert_provider(scan, provider_id: int, origin: str, args: argparse.Namespace) -> list:
-    """Convert the meshes one provider dataset gave a scan; return the meshes that failed."""
+def _nurbs_file(scan, mesh) -> tuple[int, LabeledFileInfo]:
+    """The number and JSON contents of the scan's NURBS file of the mesh's source (a new one if it has none)."""
+    nurbs = scan.files("nurbs")
+    for data in nurbs:
+        if (data.source, data.info.source_scan_id) == (mesh.source, mesh.info.source_scan_id):
+            return data.number, data.info
+    info = LabeledFileInfo(source=mesh.source, source_scan_id=mesh.info.source_scan_id, subset=mesh.info.subset)
+    return len(nurbs) + 1, info
+
+
+def convert_mesh_file(scan, mesh, origin: str, args: argparse.Namespace) -> list:
+    """Convert the meshes of one mesh file of a scan; return the meshes that failed."""
     failures = []
-    meshes = scan.model_files("mesh", provider_id)
-    nurbs_folder = layout.model_folder(scan.path, "nurbs", provider_id)
+    meshes = mesh.model_files()
+    number, nurbs_info = _nurbs_file(scan, mesh)
+    nurbs_folder = layout.model_folder(scan.path, "nurbs", number)
     converted = []
     for label, files in meshes.items():
         output_path = nurbs_folder / f"{label}.iges"
@@ -148,13 +159,11 @@ def convert_provider(scan, provider_id: int, origin: str, args: argparse.Namespa
 
     if args.dry_run or not converted:
         return failures
-    info = scan.info
-    provider = info.provider(provider_id)
-    origins = dict(provider.nurbs or {})
+    origins = dict(nurbs_info.labels)
     origins.update({label: origins.get(label, origin) if not args.overwrite else origin for label in converted})
-    provider.set_labels("nurbs", list(origins), origins)
+    nurbs_info.set_labels(list(origins), origins)
     pack_scan(scan.path)
-    info.save(scan.path / layout.SCAN_JSON)
+    nurbs_info.save(layout.data_json(scan.path, "nurbs", number))
     return failures
 
 

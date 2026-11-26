@@ -1,9 +1,12 @@
 """The database's webpage, a static site for GitHub Pages, in <database>/github-webpage/.
 
 build_webpage() copies the page from the package's template, fills in the database's name and links, writes
-structures.json (which groups of the body each label covers, see body_map.py), and writes the page's data (data.js)
+structures.json (the part of the body each label belongs to, see body_map.py), and writes the page's data (data.js)
 from the index. github-webpage/README.md says how to publish the page, and github-webpage/update_data.py rewrites
 data.js after the index changes, without this package.
+
+The page shows an overview of the database (counts, what the scans hold, datasets, sex, age, modality, the structures
+segmented) and a table of every scan with filters and a direct Hugging Face download link per file.
 
 Requires pyarrow: pip install "bonehub-format[converter]".
 """
@@ -25,9 +28,6 @@ TEMPLATE_FOLDER = "webpage_template"  # in the package
 TEMPLATE_FILES = (
     "index.html",
     "app.js",
-    "overview.js",
-    "coverage.js",
-    "datasets.js",
     "styles.css",
     "logo.png",
     ".nojekyll",
@@ -94,10 +94,19 @@ def build_webpage(
     if github_repo:
         links.append(_link(f"https://github.com/{github_repo}", "github-link", "View on GitHub", _GITHUB_ICON))
     about = about_html or (
-        "<p>This dataset holds medical images, bone segmentations and the 3D bone shapes derived from them, converted "
-        "from public datasets into the <a href=\"https://github.com/BoneHub/BoneHub-Format\" target=\"_blank\" "
-        "rel=\"noopener noreferrer\">BoneHub format</a>. It is intended for biomedical research.</p>"
+        "<p>This database holds medical images, segmentations of bones, muscles and other tissues, and the 3D shapes "
+        "derived from them, converted from public datasets into the <a href=\"https://github.com/BoneHub/BoneHub-Format\" "
+        "target=\"_blank\" rel=\"noopener noreferrer\">BoneHub format</a>. Each person is stored once. It is intended "
+        "for biomedical research.</p>"
     )
+    if hf_url:
+        source_note = (
+            f'The data is in the database\'s {_link(hf_url, "", "The dataset on Hugging Face", "Hugging Face repository")}, '
+            "the main source of this page: its README explains how to download the data, all of it or only what you need, "
+            "and how to work with it."
+        )
+    else:
+        source_note = "The database is not published on Hugging Face yet."
     contact = f'<section class="contact">\n            <h2>📬 Contact</h2>\n            {contact_html}\n        </section>' if contact_html else ""
     values = {
         "{{TITLE}}": html.escape(title),
@@ -106,6 +115,7 @@ def build_webpage(
         "{{LINKS}}": "\n                ".join(links),
         "{{NOTE}}": f'<p class="note">{note_html}</p>' if note_html else "",
         "{{ABOUT}}": about,
+        "{{SOURCE_NOTE}}": source_note,
         "{{CONTACT}}": contact,
         "{{ANALYTICS}}": analytics_html or "",
         "{{HF_URL}}": hf_url or "(not published yet)",

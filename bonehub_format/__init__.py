@@ -22,9 +22,11 @@ from .licenses import LICENSE_KINDS, LICENSES, RESTRICTED, check_license, is_pub
 from .metadata import (
     LABEL_KINDS,
     DatasetInfo,
+    FileInfo,
+    LabeledFileInfo,
     Licenses,
-    ProviderInfo,
     ScanInfo,
+    SourceInfo,
     SubjectInfo,
     SubsetInfo,
     check_label,
@@ -32,7 +34,7 @@ from .metadata import (
     file_license,
     sort_labels,
 )
-from .reader import Database, Dataset, Scan, Subject
+from .reader import Database, DataFile, Dataset, Scan, Subject
 from .registry import REGISTRY_URL, load_registry, registry_entry_url
 from .segmentation_file import (
     SEGMENTATION_SUFFIX,
@@ -70,7 +72,9 @@ __all__ = [
     "SubjectInfo",
     "ScanInfo",
     "Licenses",
-    "ProviderInfo",
+    "SourceInfo",
+    "FileInfo",
+    "LabeledFileInfo",
     "SubsetInfo",
     "file_license",
     "check_label",
@@ -80,6 +84,7 @@ __all__ = [
     "Dataset",
     "Subject",
     "Scan",
+    "DataFile",
     "SEGMENTATION_SUFFIX",
     "read_segmentation",
     "read_segmentation_header",

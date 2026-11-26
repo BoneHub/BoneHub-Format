@@ -31,17 +31,10 @@ OUTPUT_ROOT = Path(__file__).resolve().parent / "dummy_bonehub_dataset"
 class _ConvertAndRead:
     converter: str  # class name in custom_dataset_io
     source: str  # folder in PUBLIC_DATASETS
-    dataset_id: int  # its BoneHub ID
+    dataset_id: int  # the dataset's number in the test database (the source's BoneHub ID, for readability)
     subjects = 2  # MAX_SUBJECTS_FOR_TESTING per list of subjects the converter reads
-    # Datasets whose data the converted scans hold (provider ID, converter, source): converted first, so that their
-    # dataset.json is in the database. Those that only give data to other datasets write nothing else.
-    providers: tuple[tuple[int, str, str], ...] = ()
 
     def test_convert_and_read(self):
-        for dataset_id, converter, source in self.providers:
-            getattr(custom_dataset_io, converter)(PUBLIC_DATASETS / source).export_to_bonehub_format(
-                OUTPUT_ROOT, dataset_id, overwrite=True, verbose=False
-            )
         converter = getattr(custom_dataset_io, self.converter)(PUBLIC_DATASETS / self.source)
         converter.export_to_bonehub_format(OUTPUT_ROOT, self.dataset_id, overwrite=True, verbose=False)
 
@@ -49,11 +42,11 @@ class _ConvertAndRead:
         self.assertEqual(len(dataset), self.subjects)
         self.assertEqual([s.id for s in dataset.subjects()], list(range(1, self.subjects + 1)))
         for scan in dataset.scans():
-            if scan.image_path is not None:
-                self.assertIsNotNone(scan.license("image"), scan.key)
-            self.assertTrue(scan.provider_ids, scan.key)
-        names = [dataset.path.name] + [f"ds-{dataset_id:04d}" for dataset_id, _, _ in self.providers]
-        problems = [p for p in validate(OUTPUT_ROOT) if any(name in p for name in names)]
+            self.assertTrue(scan.files(), scan.key)
+            for data in scan.files():
+                self.assertIn(data.source, dataset.info.sources, data.path)
+                self.assertIsNotNone(data.license(), data.path)
+        problems = [p for p in validate(OUTPUT_ROOT) if dataset.path.name in p]
         self.assertEqual(problems, [])
 
 
@@ -72,11 +65,6 @@ class TestSpineMetsCTSeg(_ConvertAndRead, unittest.TestCase):
 class TestEnhancePET(_ConvertAndRead, unittest.TestCase):
     converter, source, dataset_id = "EnhancePET", "0134 enhance-pet-1_6k", 134
     subjects = 4  # the first 2 non-autoPET subjects and the first 2 autoPET patients
-    providers = (
-        (18, "Atlas", "0018 Atlas dataset"),
-        (40, "FDGPETCTLesions", "0040 TCIA FDG-PET-CT-Lesions"),
-        (75, "PSMAFDGPETCTLesions", "0075 psma-fdg-pet-ct-lesions"),
-    )
 
 
 class TestPSMAFDGPETCTLesions(_ConvertAndRead, unittest.TestCase):
@@ -122,12 +110,10 @@ class TestSynthRAD2023(_ConvertAndRead, unittest.TestCase):
 
 class TestVSDFullBody(_ConvertAndRead, unittest.TestCase):
     converter, source, dataset_id = "VSDFullBody", "0071 VSDFullBody", 71
-    providers = ((180, "VSDLowerExtremitiesSeg", "0180 vsd-lower-extremities-seg"),)
 
 
 class TestVisibleHuman3DModels(_ConvertAndRead, unittest.TestCase):
     converter, source, dataset_id = "VisibleHuman3DModels", "0153 visible-human-3d-models", 153
-    providers = ((109, "VisibleHumanCOB", "0109 VisibleHuman"),)
 
 
 class TestACRIN6664(_ConvertAndRead, unittest.TestCase):

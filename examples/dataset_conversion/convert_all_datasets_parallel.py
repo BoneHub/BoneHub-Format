@@ -14,14 +14,11 @@ Convert only the subjects that failed (or were not reached) in an earlier run:
 
     python examples/dataset_conversion/convert_all_datasets_parallel.py --output-root /mnt/nas/BoneHub/Harmonized_Databases/MyDatabase --resume --datasets vsd_lower_extremities_seg
 
-Some datasets give all their data to the scans of others (their subjects live there; see the converter module docstring
-in bonehub_format/converter.py): atlas (into enhance_pet), fdg_pet_ct_lesions (enhance_pet), vsd_lower_extremities_seg
-(vsd_full_body) and visible_human_cob (visible_human_3d_models). They write only their dataset.json, which the
-database needs for the licenses of that data: convert them together with the datasets they give data to.
-
-The whole-body datasets of 3D-Bone-Database (Phase 1):
-
-    python examples/dataset_conversion/convert_all_datasets_parallel.py --output-root /mnt/nas/BoneHub/Harmonized_Databases/3D-Bone-Database --overwrite --datasets totalsegmentator_ct totalsegmentator_mri healthy_total_body_cts enhance_pet atlas fdg_pet_ct_lesions psma_fdg_pet_ct_lesions quadra_hc vsd_full_body vsd_lower_extremities_seg visible_human_3d_models visible_human_cob openskeleton cads
+Each job's dataset_id is the number of its dataset folder in the database (ds-NNNN), which the database chooses; here
+it is the source's BoneHub ID, for readability. Sources that give all their data to the scans of another (Atlas into
+enhance_pet, FDG-PET-CT-Lesions into enhance_pet, vsd-lower-extremities-seg into vsd_full_body, 3D Visible Human into
+visible_human_3d_models) are taken in by that converter and have no job of their own. A database with its own
+numbering has its own build script (e.g. build_database.py of 3D-Bone-Database).
 
 Afterwards, get the database ready to upload (see the README):
 
@@ -46,7 +43,7 @@ from bonehub_format import layout
 @dataclass(frozen=True)
 class DatasetJob:
     name: str
-    dataset_id: int  # the dataset's BoneHub ID in the registry
+    dataset_id: int  # the number of the dataset's folder in the database
     dataset_class: type
     source_root: Path
 
@@ -75,12 +72,6 @@ DATASET_JOBS: tuple[DatasetJob, ...] = (
         dataset_id=134,
         dataset_class=custom_dataset_io.EnhancePET,
         source_root=Path("/mnt/nas/BoneHub/Public_Datasets/0134 enhance-pet-1_6k"),
-    ),
-    DatasetJob(
-        name="vsd_lower_extremities_seg",
-        dataset_id=180,
-        dataset_class=custom_dataset_io.VSDLowerExtremitiesSeg,
-        source_root=Path("/mnt/nas/BoneHub/Public_Datasets/0180 vsd-lower-extremities-seg"),
     ),
     DatasetJob(
         name="totalsegmentator_ct",
@@ -125,12 +116,6 @@ DATASET_JOBS: tuple[DatasetJob, ...] = (
         source_root=Path("/mnt/nas/BoneHub/Public_Datasets/0153 visible-human-3d-models"),
     ),
     DatasetJob(
-        name="visible_human_cob",
-        dataset_id=109,
-        dataset_class=custom_dataset_io.VisibleHumanCOB,
-        source_root=Path("/mnt/nas/BoneHub/Public_Datasets/0109 VisibleHuman"),
-    ),
-    DatasetJob(
         name="totalsegmentator_mri",
         dataset_id=28,
         dataset_class=custom_dataset_io.TotalSegmentatorMRI,
@@ -153,18 +138,6 @@ DATASET_JOBS: tuple[DatasetJob, ...] = (
         dataset_id=176,
         dataset_class=custom_dataset_io.OpenSkeleton,
         source_root=Path("/mnt/nas/BoneHub/Public_Datasets/0176 OpenSkeleton"),
-    ),
-    DatasetJob(
-        name="atlas",
-        dataset_id=18,
-        dataset_class=custom_dataset_io.Atlas,
-        source_root=Path("/mnt/nas/BoneHub/Public_Datasets/0018 Atlas dataset"),
-    ),
-    DatasetJob(
-        name="fdg_pet_ct_lesions",
-        dataset_id=40,
-        dataset_class=custom_dataset_io.FDGPETCTLesions,
-        source_root=Path("/mnt/nas/BoneHub/Public_Datasets/0040 TCIA FDG-PET-CT-Lesions"),
     ),
     DatasetJob(
         name="cads",

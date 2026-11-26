@@ -1,13 +1,15 @@
 """The index: Parquet tables that summarise a database, to search it without opening every file.
 
     index/datasets.parquet   one row per dataset
+    index/sources.parquet    one row per dataset and source (a registry dataset it is made from)
     index/scans.parquet      one row per scan, with the fields of its subject
-    index/labels.parquet     one row per scan, provider dataset, label and kind (segmentation, mesh, nurbs)
+    index/files.parquet      one row per data file (image, segmentation, mesh or NURBS zip): its path, size and license
+    index/labels.parquet     one row per data file and label
 
 The index is generated: build_index() rewrites it from the metadata files, the headers of the images and
 segmentations. It also holds what the metadata files leave out because the data says it: image size and voxel
 spacing, which segmented structures touch the image border (so are probably cut off by the field of view), the
-license each file is under and whether it is published.
+license each file is under, whether it is published, and its size.
 
 Requires pyarrow: pip install "bonehub-format[converter]".
 """
@@ -18,9 +20,8 @@ import gzip
 import os
 import struct
 import tempfile
-from pathlib import Path
-
 import json
+from pathlib import Path
 
 from . import layout
 from .licenses import LICENSE_KINDS, is_publishable
@@ -28,7 +29,13 @@ from .metadata import LABEL_KINDS
 from .reader import Database
 from .segmentation_file import read_segmentation_segments
 
-INDEX_FILES = {"datasets": "datasets.parquet", "scans": "scans.parquet", "labels": "labels.parquet"}
+INDEX_FILES = {
+    "datasets": "datasets.parquet",
+    "sources": "sources.parquet",
+    "scans": "scans.parquet",
+    "files": "files.parquet",
+    "labels": "labels.parquet",
+}
 
 
 def _arrow():
@@ -78,94 +85,123 @@ def truncated_labels(segmentation_path: Path, image_size: list[int] | None) -> l
 
 def collect_index(root: Path) -> dict[str, list[dict]]:
     """The rows of the index tables."""
-    root = Database(root)
-    datasets, scans, labels = [], [], []
-    all_scans = list(root.scans())
-    provided = {}  # dataset ID -> the scans it gives data to
-    for scan in all_scans:
-        for dataset_id in scan.provider_ids:
-            provided.setdefault(dataset_id, set()).add(scan.key)
-
-    for dataset in root.datasets():
+    root = Path(root)
+    database = Database(root)
+    rows = {name: [] for name in INDEX_FILES}
+    for dataset in database.datasets():
         info = dataset.info
-        dataset_scans = [scan for scan in all_scans if scan.dataset.id == dataset.id]
-        datasets.append(
+        scans = list(dataset.scans())
+        files_of = {}  # source -> (files, scans) of the dataset that came from it
+        for scan in scans:
+            for data in scan.files():
+                files, keys = files_of.setdefault(data.source, ([], set()))
+                files.append(data)
+                keys.add(scan.key)
+        rows["datasets"].append(
             {
                 "dataset_id": dataset.id,
-                **{field: getattr(info, field) for field in ("name", "description", "url", "paper")},
-                **{field: getattr(info, field) for field in ("country", "release_date", "version")},
-                **{f"license_{kind}": info.license.of(kind) if info.license else None for kind in LICENSE_KINDS},
-                "subsets": json.dumps(
-                    {name: subset.to_dict() for name, subset in info.subsets.items()}, ensure_ascii=False
-                )
-                if info.subsets
-                else None,
-                "derived_from": info.derived_from,
-                "annotated_labels": info.annotated_labels,
+                "name": info.name,
+                "description": info.description,
+                "sources": list(info.sources),
                 "remarks": info.remarks,
                 "schema_version": info.schema_version,
-                "subjects": len({scan.subject.id for scan in dataset_scans}),
-                "scans": len(dataset_scans),
-                "scans_provided": len(provided.get(dataset.id, ())),
+                "subjects": len({scan.subject.id for scan in scans}),
+                "scans": len(scans),
             }
         )
+        for source_id, source in info.sources.items():
+            files, keys = files_of.get(source_id, ([], set()))
+            rows["sources"].append(
+                {
+                    "dataset_id": dataset.id,
+                    "source_id": source_id,
+                    **{field: getattr(source, field) for field in ("name", "description", "url", "paper", "country")},
+                    **{field: getattr(source, field) for field in ("release_date", "version")},
+                    **{f"license_{kind}": source.license.of(kind) if source.license else None for kind in LICENSE_KINDS},
+                    "subsets": json.dumps({name: subset.to_dict() for name, subset in source.subsets.items()}, ensure_ascii=False)
+                    if source.subsets
+                    else None,
+                    "annotated_labels": source.annotated_labels,
+                    "remarks": source.remarks,
+                    "files": len(files),
+                    "scans": len(keys),
+                }
+            )
+        for scan in scans:
+            _scan_rows(root, scan, rows)
+    return rows
 
-    for scan in all_scans:
-        info, subject_info = scan.info, scan.subject.info
-        geometry = nifti_geometry(scan.image_path) if scan.image_path else None
-        truncated_by_provider = {}
-        for dataset_id, path in scan.segmentation_paths().items():
+
+def _scan_rows(root: Path, scan, rows: dict[str, list[dict]]) -> None:
+    info, subject_info = scan.info, scan.subject.info
+    image = scan.image
+    geometry = nifti_geometry(image.path) if image is not None and image.path.is_file() else None
+    files = scan.files()
+    first = image or (files[0] if files else None)
+    row_ids = {"scan": scan.key, "dataset_id": scan.dataset.id, "subject_id": scan.subject.id, "scan_id": scan.id}
+    truncated_by_file = {}
+    for data in files:
+        if data.kind == "segmentation":
             try:
-                truncated_by_provider[dataset_id] = truncated_labels(path, geometry[0] if geometry else None)
+                truncated_by_file[data.number] = truncated_labels(data.path, geometry[0] if geometry else None)
             except (OSError, ValueError):
-                truncated_by_provider[dataset_id] = None
-        known = [found for found in truncated_by_provider.values() if found is not None]
-        truncated = sorted({label for found in known for label in found}) if known else None
-        image_license = scan.license("image")
-        image_provider = info.provider(info.image_provider) if info.image is not None else None
-        row_ids = {"scan": scan.key, "dataset_id": scan.dataset.id, "subject_id": scan.subject.id, "scan_id": scan.id}
-        scans.append(
+                truncated_by_file[data.number] = None
+        license = data.license()
+        rows["files"].append(
             {
                 **row_ids,
-                "source_subject_id": subject_info.source_subject_id(scan.dataset.id),
-                "gender": subject_info.gender,
-                "source_scan_id": info.source_scan_id(),
-                "providers": scan.provider_ids,
-                "image_provider": info.image_provider,
-                **{field: getattr(info, field) for field in ("modality", "age", "weight", "height", "bmi", "postmortem")},
-                **{field: getattr(info, field) for field in ("days_from_baseline", "registered_to")},
-                "source_split": image_provider.source_split if image_provider else None,
-                "image": scan.image_path is not None,
-                "image_license": image_license,
-                "image_published": scan.image_path is not None and is_publishable(image_license),
-                "image_size": geometry[0] if geometry else None,
-                "image_spacing": geometry[1] if geometry else None,
-                **{kind: info.labels(kind) for kind in LABEL_KINDS},
-                "truncated": truncated,
-                "subject_remarks": subject_info.remarks,
-                "remarks": info.remarks,
+                "kind": data.kind,
+                "number": data.number,
+                "path": data.path.relative_to(root).as_posix(),
+                "source": data.source,
+                "source_scan_id": data.info.source_scan_id,
+                "subset": data.info.subset,
+                "license": license,
+                "published": is_publishable(license),
+                "size": data.path.stat().st_size if data.path.is_file() else None,
+                "labels": data.labels,
             }
         )
-        for key, provider in info.providers.items():
-            dataset_id = layout.parse_provider_key(key)
-            for kind in LABEL_KINDS:
-                license = scan.license(kind, dataset_id)
-                found = truncated_by_provider.get(dataset_id) if kind == "segmentation" else None
-                for label, origin in (getattr(provider, kind) or {}).items():
-                    labels.append(
-                        {
-                            **row_ids,
-                            "provider": dataset_id,
-                            "subset": provider.subset,
-                            "label": label,
-                            "kind": kind,
-                            "origin": origin,
-                            "license": license,
-                            "published": is_publishable(license),
-                            "truncated": (label in found) if found is not None else None,
-                        }
-                    )
-    return {"datasets": datasets, "scans": scans, "labels": labels}
+        found = truncated_by_file.get(data.number) if data.kind == "segmentation" else None
+        for label, origin in getattr(data.info, "labels", {}).items():
+            rows["labels"].append(
+                {
+                    **row_ids,
+                    "kind": data.kind,
+                    "number": data.number,
+                    "source": data.source,
+                    "subset": data.info.subset,
+                    "label": label,
+                    "origin": origin,
+                    "license": license,
+                    "published": is_publishable(license),
+                    "truncated": (label in found) if found is not None else None,
+                }
+            )
+    known = [found for found in truncated_by_file.values() if found is not None]
+    image_license = image.license() if image is not None else None
+    rows["scans"].append(
+        {
+            **row_ids,
+            "source_subject_id": subject_info.source_subject_id(first.source) if first is not None else None,
+            "gender": subject_info.gender,
+            "source_scan_id": first.info.source_scan_id if first is not None else None,
+            "sources": scan.sources,
+            **{field: getattr(info, field) for field in ("modality", "age", "weight", "height", "bmi", "postmortem")},
+            **{field: getattr(info, field) for field in ("days_from_baseline", "registered_to")},
+            "source_split": first.info.source_split if first is not None else None,
+            "image": image is not None,
+            "image_source": image.source if image is not None else None,
+            "image_license": image_license,
+            "image_published": image is not None and is_publishable(image_license),
+            "image_size": geometry[0] if geometry else None,
+            "image_spacing": geometry[1] if geometry else None,
+            **{kind: scan.labels(kind) for kind in LABEL_KINDS},
+            "truncated": sorted({label for found in known for label in found}) if known else None,
+            "subject_remarks": subject_info.remarks,
+            "remarks": info.remarks,
+        }
+    )
 
 
 def _schemas(pa) -> dict:
@@ -173,32 +209,41 @@ def _schemas(pa) -> dict:
     text, labels = pa.string(), pa.list_(pa.string())
     return {
         "datasets": pa.schema(
-            [("dataset_id", pa.int32())]
+            [("dataset_id", pa.int32()), ("name", text), ("description", text), ("sources", pa.list_(pa.int32()))]
+            + [("remarks", text), ("schema_version", text), ("subjects", pa.int32()), ("scans", pa.int32())]
+        ),
+        "sources": pa.schema(
+            [("dataset_id", pa.int32()), ("source_id", pa.int32())]
             + [(field, text) for field in ("name", "description", "url", "paper", "country")]
             + [(field, text) for field in ("release_date", "version")]
             + [(f"license_{kind}", text) for kind in LICENSE_KINDS]
-            + [("subsets", text), ("derived_from", pa.list_(pa.int32())), ("annotated_labels", labels)]
-            + [("remarks", text), ("schema_version", text), ("subjects", pa.int32()), ("scans", pa.int32())]
-            + [("scans_provided", pa.int32())]
+            + [("subsets", text), ("annotated_labels", labels), ("remarks", text)]
+            + [("files", pa.int32()), ("scans", pa.int32())]
         ),
         "scans": pa.schema(
             [("scan", text)]
             + ids
-            + [("source_subject_id", text), ("gender", text), ("source_scan_id", text)]
-            + [("providers", pa.list_(pa.int32())), ("image_provider", pa.int32()), ("modality", text)]
-            + [("age", pa.int32()), ("weight", pa.float64()), ("height", pa.float64()), ("bmi", pa.float64())]
-            + [("postmortem", pa.bool_()), ("days_from_baseline", pa.int32()), ("registered_to", text)]
-            + [("source_split", text), ("image", pa.bool_()), ("image_license", text), ("image_published", pa.bool_())]
+            + [("source_subject_id", text), ("gender", text), ("source_scan_id", text), ("sources", pa.list_(pa.int32()))]
+            + [("modality", text), ("age", pa.int32()), ("weight", pa.float64()), ("height", pa.float64())]
+            + [("bmi", pa.float64()), ("postmortem", pa.bool_()), ("days_from_baseline", pa.int32())]
+            + [("registered_to", text), ("source_split", text), ("image", pa.bool_()), ("image_source", pa.int32())]
+            + [("image_license", text), ("image_published", pa.bool_())]
             + [("image_size", pa.list_(pa.int32())), ("image_spacing", pa.list_(pa.float64()))]
             + [(kind, labels) for kind in LABEL_KINDS]
             + [("truncated", labels)]
             + [("subject_remarks", text), ("remarks", text)]
         ),
+        "files": pa.schema(
+            [("scan", text)]
+            + ids
+            + [("kind", text), ("number", pa.int32()), ("path", text), ("source", pa.int32()), ("source_scan_id", text)]
+            + [("subset", text), ("license", text), ("published", pa.bool_()), ("size", pa.int64()), ("labels", labels)]
+        ),
         "labels": pa.schema(
             [("scan", text)]
             + ids
-            + [("provider", pa.int32()), ("subset", text), ("label", text), ("kind", text), ("origin", text)]
-            + [("license", text), ("published", pa.bool_()), ("truncated", pa.bool_())]
+            + [("kind", text), ("number", pa.int32()), ("source", pa.int32()), ("subset", text), ("label", text)]
+            + [("origin", text), ("license", text), ("published", pa.bool_()), ("truncated", pa.bool_())]
         ),
     }
 

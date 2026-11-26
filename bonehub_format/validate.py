@@ -1,7 +1,7 @@
 """Checking that a database follows the BoneHub format.
 
     problems = validate(root)                         # the data itself
-    problems = validate(root, registry=REGISTRY_URL)  # and that every dataset ID is a BoneHub ID of the registry
+    problems = validate(root, registry=REGISTRY_URL)  # and that every source is a dataset of the registry
     problems = validate(root, publishing=True)        # and that it is ready to upload: licenses, zips and index
 
 Each problem is a line of text naming the file or folder concerned; an empty list means none was found.
@@ -17,11 +17,11 @@ from pydantic import ValidationError
 from . import layout
 from ._version import SCHEMA_VERSION, is_compatible_schema_version
 from .archive import model_folder_files, zip_is_current
-from .metadata import DatasetInfo, ScanInfo, SubjectInfo, file_license
+from .metadata import DatasetInfo, FileInfo, LabeledFileInfo, ScanInfo, SubjectInfo, file_license
 from .registry import as_registry
 from .segmentation_file import read_segmentation_labels
 
-_INDEX_FILES = ("datasets.parquet", "scans.parquet", "labels.parquet")
+_INDEX_FILES = ("datasets.parquet", "sources.parquet", "scans.parquet", "files.parquet", "labels.parquet")
 
 
 def _load(model, path: Path, problems: list[str]):
@@ -32,10 +32,10 @@ def _load(model, path: Path, problems: list[str]):
         return None
 
 
-def _model_labels(scan_folder: Path, kind: str, dataset_id: int, problems: list[str], publishing: bool) -> set[str] | None:
-    """The labels a scan has files for, of one model kind and provider; None if they cannot be read."""
-    folder = layout.model_folder(scan_folder, kind, dataset_id)
-    zip_path = layout.model_zip(scan_folder, kind, dataset_id)
+def _model_labels(scan_folder: Path, kind: str, number: int, problems: list[str], publishing: bool) -> set[str] | None:
+    """The labels a model file of a scan holds; None if they cannot be read."""
+    folder = layout.model_folder(scan_folder, kind, number)
+    zip_path = layout.model_zip(scan_folder, kind, number)
     try:
         if folder.is_dir():
             labels = {f.stem for f in model_folder_files(folder, kind)}
@@ -54,113 +54,30 @@ def _model_labels(scan_folder: Path, kind: str, dataset_id: int, problems: list[
 
 
 class _Checker:
-    def __init__(self, root: Path, registry: Mapping[int, str] | None, publishing: bool):
-        self.root = root
+    def __init__(self, registry: Mapping[int, str] | None, publishing: bool):
         self.registry = registry
         self.publishing = publishing
         self.problems: list[str] = []
-        self.datasets: dict[int, DatasetInfo] = {}  # the dataset.json of every dataset folder that has a valid one
-        self.used_providers: set[int] = set()
-        self.missing_licenses: Counter = Counter()  # (provider, kind) -> files without a known license
+        self.missing_licenses: Counter = Counter()  # (dataset folder, source, kind) -> files without a known license
 
-    def check_scan(self, scan_folder: Path, sibling_names: set[str]) -> None:
-        problems = self.problems
-        info = _load(ScanInfo, scan_folder / layout.SCAN_JSON, problems)
-        if info is None:
-            return
-        scan_json = scan_folder / layout.SCAN_JSON
-        if not info.providers:
-            problems.append(f"{scan_json}: lists no providers.")
-        if info.registered_to is not None and (info.registered_to not in sibling_names or info.registered_to == scan_folder.name):
-            problems.append(f"{scan_json}: registered_to names '{info.registered_to}', not another scan of this subject.")
-
-        has_image = (scan_folder / layout.IMAGE_FILE).is_file()
-        if info.image is not None and not has_image:
-            problems.append(f"{scan_json}: says the image comes from {info.image}, but there is no {layout.IMAGE_FILE}.")
-        elif has_image and info.image is None:
-            problems.append(f"{scan_folder / layout.IMAGE_FILE}: scan.json does not say which provider it comes from.")
-
-        for key, provider in info.providers.items():
-            dataset_id = layout.parse_provider_key(key)
-            self.used_providers.add(dataset_id)
-            dataset = self.datasets.get(dataset_id)
-            if dataset is None:
-                problems.append(f"{scan_json}: provider {key} has no dataset folder with a valid {layout.DATASET_JSON} here.")
-            elif provider.subset is not None and provider.subset not in (dataset.subsets or {}):
-                problems.append(f"{scan_json}: provider {key} names subset '{provider.subset}', which its dataset.json lacks.")
-
-        entries = {}
-        for entry in scan_folder.iterdir():
-            if entry.name in (layout.SCAN_JSON, layout.IMAGE_FILE):
-                continue
-            parsed = layout.parse_scan_entry(entry.name)
-            if parsed is None:
-                problems.append(f"{entry}: not part of a scan folder.")
-                continue
-            kind, dataset_id, _ = parsed
-            entries.setdefault((kind, dataset_id), []).append(entry)
-            if layout.provider_key(dataset_id) not in info.providers:
-                problems.append(f"{entry}: comes from {layout.provider_key(dataset_id)}, which scan.json does not list.")
-
-        for key, provider in info.providers.items():
-            dataset_id = layout.parse_provider_key(key)
-            self._check_segmentation(scan_folder, dataset_id, set(provider.labels("segmentation")))
-            for kind in layout.MODEL_KINDS:
-                found = _model_labels(scan_folder, kind, dataset_id, problems, self.publishing)
-                expected = set(provider.labels(kind))
-                if found is not None and found != expected:
-                    problems.append(
-                        f"{scan_folder}: has {kind} files of {key} for {sorted(found)}, but scan.json lists {sorted(expected)}."
-                    )
-
-        if self.publishing:
-            kinds = [("image", info.image_provider)] if info.image is not None else []
-            for key, provider in info.providers.items():
-                kinds += [(kind, layout.parse_provider_key(key)) for kind in ("segmentation", *layout.MODEL_KINDS) if provider.labels(kind)]
-            for kind, dataset_id in kinds:
-                if file_license(info, kind, dataset_id, self.datasets.get(dataset_id)) is None:
-                    self.missing_licenses[(dataset_id, kind)] += 1
-
-    def _check_segmentation(self, scan_folder: Path, dataset_id: int, expected: set[str]) -> None:
-        segmentation = layout.segmentation_file(scan_folder, dataset_id)
-        if segmentation.is_file():
-            try:
-                found = set(read_segmentation_labels(segmentation))
-            except (ValueError, OSError) as e:
-                self.problems.append(f"{segmentation}: {e}")
-            else:
-                if found != expected:
-                    self.problems.append(
-                        f"{segmentation}: holds {sorted(found)}, but scan.json lists {sorted(expected)} for it."
-                    )
-        elif expected:
-            self.problems.append(f"{scan_folder}: scan.json lists a segmentation of {layout.provider_key(dataset_id)}, but there is no {segmentation.name}.")
-
-    def load_dataset(self, dataset_folder: Path) -> None:
-        """Read and check a dataset.json; keep it for the checks of the scans."""
-        problems = self.problems
-        dataset_id = layout.parse_dataset_dir(dataset_folder.name)
+    def load_dataset(self, dataset_folder: Path) -> DatasetInfo | None:
+        """Read and check a dataset.json."""
         dataset_json = dataset_folder / layout.DATASET_JSON
-        if self.registry is not None and dataset_id not in self.registry:
-            problems.append(f"{dataset_folder}: {dataset_id} is not a BoneHub ID of the registry.")
-        info = _load(DatasetInfo, dataset_json, problems)
+        info = _load(DatasetInfo, dataset_json, self.problems)
         if info is None:
-            return
+            return None
         if not is_compatible_schema_version(info.schema_version):
-            problems.append(
+            self.problems.append(
                 f"{dataset_json}: written in format version {info.schema_version}, which this package (format version "
                 f"{SCHEMA_VERSION}) cannot read."
             )
-            return
-        if dataset_id in (info.derived_from or []):
-            problems.append(f"{dataset_json}: derived_from names the dataset itself.")
-        for parent in info.derived_from or []:
-            if self.registry is not None and parent not in self.registry:
-                problems.append(f"{dataset_json}: derived_from names {parent}, which is not a BoneHub ID of the registry.")
-        self.datasets[dataset_id] = info
+            return None
+        for source_id in info.sources:
+            if self.registry is not None and source_id not in self.registry:
+                self.problems.append(f"{dataset_json}: source {source_id} is not a BoneHub ID of the registry.")
+        return info
 
-    def check_dataset(self, dataset_folder: Path) -> int:
-        """Check the subjects of a dataset folder; return how many there are."""
+    def check_dataset(self, dataset_folder: Path, dataset: DatasetInfo) -> None:
         problems = self.problems
         subject_folders = []
         for entry in sorted(dataset_folder.iterdir()):
@@ -170,13 +87,19 @@ class _Checker:
                 problems.append(f"{entry}: not a subject folder (sub-NNNNNN).")
                 continue
             subject_folders.append(entry)
+        if not subject_folders:
+            problems.append(f"{dataset_folder}: has no subjects.")
 
         for subject_folder in subject_folders:
-            subject = _load(SubjectInfo, subject_folder / layout.SUBJECT_JSON, problems)
+            subject_json = subject_folder / layout.SUBJECT_JSON
+            subject = _load(SubjectInfo, subject_json, problems)
             if subject is None:
                 continue
-            if dataset_folder.name not in subject.sources:
-                problems.append(f"{subject_folder / layout.SUBJECT_JSON}: sources lacks the subject's ID in {dataset_folder.name}, its home.")
+            if not subject.sources:
+                problems.append(f"{subject_json}: gives the subject's ID in no source.")
+            for source_id in subject.sources:
+                if source_id not in dataset.sources:
+                    problems.append(f"{subject_json}: names source {source_id}, which dataset.json does not list.")
             scan_folders = []
             for entry in sorted(subject_folder.iterdir()):
                 if entry.name == layout.SUBJECT_JSON:
@@ -192,8 +115,72 @@ class _Checker:
                 if not (scan_folder / layout.SCAN_JSON).is_file():
                     problems.append(f"{scan_folder}: has no {layout.SCAN_JSON}.")
                     continue
-                self.check_scan(scan_folder, names)
-        return len(subject_folders)
+                self.check_scan(scan_folder, names, dataset)
+
+    def check_scan(self, scan_folder: Path, sibling_names: set[str], dataset: DatasetInfo) -> None:
+        problems = self.problems
+        scan_json = scan_folder / layout.SCAN_JSON
+        info = _load(ScanInfo, scan_json, problems)
+        if info is None:
+            return
+        if info.registered_to is not None and (info.registered_to not in sibling_names or info.registered_to == scan_folder.name):
+            problems.append(f"{scan_json}: registered_to names '{info.registered_to}', not another scan of this subject.")
+
+        roles: dict[tuple[str, int | None], set[str]] = {}
+        for entry in scan_folder.iterdir():
+            if entry.name == layout.SCAN_JSON:
+                continue
+            parsed = layout.parse_scan_entry(entry.name)
+            if parsed is None or (parsed[2] == "folder") != entry.is_dir():
+                problems.append(f"{entry}: not part of a scan folder.")
+                continue
+            kind, number, role = parsed
+            roles.setdefault((kind, number), set()).add(role)
+        if not roles:
+            problems.append(f"{scan_folder}: holds no data.")
+
+        for kind in layout.LABELED_KINDS:
+            numbers = sorted(number for k, number in roles if k == kind)
+            if numbers != list(range(1, len(numbers) + 1)):
+                problems.append(f"{scan_folder}: its {kind} files are numbered {numbers}, not 1 to {len(numbers)}.")
+
+        for (kind, number), found in sorted(roles.items(), key=lambda item: (layout.DATA_KINDS.index(item[0][0]), item[0][1] or 0)):
+            json_path = layout.data_json(scan_folder, kind, number)
+            data_path = layout.data_file(scan_folder, kind, number)
+            if "json" not in found:
+                problems.append(f"{scan_folder}: has {data_path.name} without {json_path.name}.")
+                continue
+            if not found & {"data", "folder"}:
+                problems.append(f"{json_path}: describes {data_path.name}, which is missing.")
+                continue
+            file_info = _load(FileInfo if kind == "image" else LabeledFileInfo, json_path, problems)
+            if file_info is None:
+                continue
+            source = dataset.source(file_info.source)
+            if source is None:
+                problems.append(f"{json_path}: comes from source {file_info.source}, which dataset.json does not list.")
+                continue
+            if file_info.subset is not None and file_info.subset not in (source.subsets or {}):
+                problems.append(f"{json_path}: names subset '{file_info.subset}', which source {file_info.source} lacks.")
+            if kind == "segmentation":
+                self._check_segmentation(data_path, set(file_info.labels))
+            elif kind in layout.MODEL_KINDS:
+                labels = _model_labels(scan_folder, kind, number, problems, self.publishing)
+                if labels is not None and labels != set(file_info.labels):
+                    problems.append(f"{json_path}: lists {sorted(file_info.labels)}, but the files are of {sorted(labels)}.")
+            if self.publishing and file_license(kind, file_info, dataset) is None:
+                self.missing_licenses[(scan_folder.parent.parent.name, file_info.source, kind)] += 1
+
+    def _check_segmentation(self, path: Path, expected: set[str]) -> None:
+        try:
+            found = set(read_segmentation_labels(path))
+        except (ValueError, OSError) as e:
+            self.problems.append(f"{path}: {e}")
+            return
+        if not found:
+            self.problems.append(f"{path}: holds no labels.")
+        elif found != expected:
+            self.problems.append(f"{path}: holds {sorted(found)}, but its JSON file lists {sorted(expected)}.")
 
 
 def _check_index(root: Path, problems: list[str]) -> None:
@@ -216,15 +203,14 @@ def validate(root: Path, publishing: bool = False, registry: Mapping[int, str] |
     """The problems found in a database (see the module docstring).
 
     registry: the BoneHub registry (see registry.py), as loaded by load_registry or as its URL or path. When given,
-    every dataset ID and every derived_from must be a BoneHub ID of it (and so every provider, which must be a
-    dataset folder of the database).
+    every source of every dataset must be a BoneHub ID of it.
     """
     root = Path(root)
-    checker = _Checker(root, None if registry is None else as_registry(registry), publishing)
+    checker = _Checker(None if registry is None else as_registry(registry), publishing)
     problems = checker.problems
     for entry in sorted(root.glob("ds-*")):
         if entry.is_dir() and layout.parse_dataset_dir(entry.name) is None:
-            problems.append(f"{entry}: not a dataset folder (ds-NNNN, named after the dataset's BoneHub ID).")
+            problems.append(f"{entry}: not a dataset folder (ds-NNNN).")
     dataset_folders = sorted(p for p in root.iterdir() if p.is_dir() and layout.parse_dataset_dir(p.name) is not None)
     if not dataset_folders:
         return problems + [f"{root}: has no dataset folders (ds-NNNN)."]
@@ -232,21 +218,14 @@ def validate(root: Path, publishing: bool = False, registry: Mapping[int, str] |
         if not (dataset_folder / layout.DATASET_JSON).is_file():
             problems.append(f"{dataset_folder}: has no {layout.DATASET_JSON}.")
             continue
-        checker.load_dataset(dataset_folder)
+        info = checker.load_dataset(dataset_folder)
+        if info is not None:
+            checker.check_dataset(dataset_folder, info)
 
-    without_subjects = []
-    for dataset_folder in dataset_folders:
-        dataset_id = layout.parse_dataset_dir(dataset_folder.name)
-        if dataset_id in checker.datasets and checker.check_dataset(dataset_folder) == 0:
-            without_subjects.append(dataset_folder)
-    for dataset_folder in without_subjects:
-        if layout.parse_dataset_dir(dataset_folder.name) not in checker.used_providers:
-            problems.append(f"{dataset_folder}: has no subjects and gives data to no scan of the database.")
-
-    for (dataset_id, kind), count in sorted(checker.missing_licenses.items()):
+    for (dataset_folder, source_id, kind), count in sorted(checker.missing_licenses.items()):
         problems.append(
-            f"{layout.provider_key(dataset_id)}: {count} {kind} file(s) it provides have no known license; give it in "
-            "its dataset.json (license, or the license of its subset)."
+            f"{dataset_folder}: {count} {kind} file(s) of source {source_id} have no known license; give it in "
+            "dataset.json (the source's license, or that of its subset)."
         )
     if publishing:
         _check_index(root, problems)

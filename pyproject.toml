@@ -19,7 +19,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# Reading and writing segmentation masks (.seg.nrrd).
+# Reading and writing segmentation masks (.nrrd).
 io = [
     "numpy",
     "SimpleITK",
@@ -37,6 +37,7 @@ converter = [
     "pyarrow",
     "h5py",  # MATLAB 7.3 files (e.g. OpenSkeleton)
     "scipy",  # older MATLAB files
+    "vtk",  # closed-surface segmentations (3D Visible Human)
 ]
 all = [
     "bonehub-format[converter]",

@@ -9,7 +9,7 @@ data_root = Path("/mnt/nas/BoneHub/Public_Datasets/0006 SynthRAD2023")
 if __name__ == "__main__":
     SynthRAD2023(dataset_root=data_root).export_to_bonehub_format(
         database_root,
-        output_dataset_id=6,  # SynthRAD 2023's BoneHub ID in the registry
+        output_dataset_id=1,  # the number of its folder in the database: ds-0001
         overwrite=True,  # or resume=True to keep the subjects an interrupted run finished
         num_workers=8,
     )

@@ -1,6 +1,7 @@
-"""Converting a source dataset into a BoneHub-format dataset.
+"""Converting a source dataset into a dataset of a BoneHub-format database.
 
-A converter subclasses DatasetConverter and sets the handlers of `custom_data_handlers`:
+A converter subclasses DatasetConverter, names the source it converts (its BoneHub ID in the registry and its
+SourceInfo), and sets the handlers of `custom_data_handlers`:
 
     read_dataset(dataset_root) -> list[SubjectSource]   lists the subjects, their scans and their metadata
     export_image(scan, output_path)                     optional; by default the image is read from
@@ -10,19 +11,22 @@ A converter subclasses DatasetConverter and sets the handlers of `custom_data_ha
     export_nurbs(scan, output_folder)                   writes <LABEL>.iges and/or <LABEL>.step files into its
                                                         nurbs folder
 
-The dataset being converted is the home of its subjects. Where the same subject or image is also in other datasets,
-the scan merges their data: each `Contribution` of a ScanSource is what another dataset (a provider) gives the scan,
-exported with that dataset's own handlers, and written into files named after it (segmentation.ds-0018.seg.nrrd).
-The image comes from the home dataset or from one contribution. The provider's own converter then leaves those
-subjects out, so that each person is stored once; a dataset whose every subject lives elsewhere is written as its
-dataset.json alone.
+Where the same subject or image is also in other sources, the scan merges their data: each `Contribution` of a
+ScanSource is what another source gives the scan, exported with that source's own handlers. The dataset lists every
+source it draws from (other_sources), so that a source that gives all its data to the scans of others needs no
+dataset of its own; its converter, if it has subjects of its own too, leaves out the subjects that live elsewhere, so
+that each person is stored once.
+
+Each data file is written with a JSON file of the same name that names its source: image.nii.gz and image.json, and
+numbered files for the rest (segmentation-1.nrrd and segmentation-1.json, mesh-1/ and mesh-1.json, ...), the converted
+source's own first, then those of the contributions in their order.
 
 Subjects are numbered in the natural order of their source_subject_id (case_2 before case_10), and the scans of a
-subject by days_from_baseline (scans without one last) and then by source_scan_id. Converting the same source again
-therefore gives the same IDs, which is what lets derived datasets and publications refer to them. The dataset ID is
-the dataset's BoneHub ID in the registry (see registry.py).
+subject by days_from_baseline (scans without one last), then the converted source's own scans before the scans that
+only other sources give, then by source_scan_id. Converting the same source again
+therefore gives the same IDs. The dataset's number (ds-NNNN) is chosen by whoever builds the database.
 
-Handlers are called with the ScanSource for the home dataset's data and with the Contribution for a provider's;
+Handlers are called with the ScanSource for the converted source's data and with the Contribution for another's;
 both have source_scan_id and the *_paths fields.
 
 Subjects are converted in worker processes, so the handlers must be module-level functions (or functools.partial
@@ -54,7 +58,7 @@ from . import layout
 from ._version import SCHEMA_VERSION, is_compatible_schema_version
 from .archive import model_folder_files, pack_scan
 from .export import export_image as export_image_file
-from .metadata import DatasetInfo, Licenses, ProviderInfo, ScanInfo, SubjectInfo, check_origin
+from .metadata import DatasetInfo, FileInfo, LabeledFileInfo, Licenses, ScanInfo, SourceInfo, SubjectInfo, check_origin
 from .segmentation_file import read_segment_numbers, read_segmentation_labels, write_indexed_segmentation
 
 # Each worker process holds whole volumes in memory, so keep the default modest.
@@ -102,12 +106,12 @@ def _check_origins(value):
 
 
 class _ProvidedData(BaseModel):
-    """The data one dataset gives a scan: where its files are, how they are named in the source, under which terms."""
+    """The data one source gives a scan: where its files are, how they are named in the source, under which terms."""
 
-    source_scan_id: str | None = Field(None, description="ID of the scan in this dataset's source")
-    subset: str | None = Field(None, description="The collection of the dataset the scan belongs to (see DatasetInfo.subsets)")
+    source_scan_id: str | None = Field(None, description="ID of the scan in the source")
+    subset: str | None = Field(None, description="The collection of the source the scan belongs to (see SourceInfo.subsets)")
     source_split: str | None = Field(None, description="Split of the source dataset, e.g. train, val or test")
-    license: Licenses | None = Field(None, description="License of this scan's data, where it differs from the dataset's")
+    license: Licenses | None = Field(None, description="License of this scan's data, where it differs from the source's")
     image_path: Path | None = Field(None, description="Image file or DICOM folder")
     segmentation_paths: list[Path] | None = Field(None, description="Source files of the segmentation")
     mesh_paths: list[Path] | None = Field(None, description="Source files of the meshes")
@@ -115,7 +119,7 @@ class _ProvidedData(BaseModel):
     segmentation_origin: Origin = Field("source", description="Origin of every label, or label -> origin")
     mesh_origin: Origin = Field("source", description="Origin of every mesh, or label -> origin")
     nurbs_origin: Origin = Field("source", description="Origin of every NURBS surface, or label -> origin")
-    remarks: str | None = Field(None, description="Remarks about this dataset's data of the scan")
+    remarks: str | None = Field(None, description="Remarks about this source's data of the scan, for each of its files")
 
     model_config = ConfigDict(strict=True, extra="forbid", validate_assignment=True)
 
@@ -131,55 +135,54 @@ class _ProvidedData(BaseModel):
 
 
 class Contribution(_ProvidedData):
-    """What another dataset (a provider) gives a scan of the dataset being converted, exported with that dataset's
-    handlers into files named after it."""
+    """What another source gives a scan of the source being converted, exported with that source's handlers."""
 
-    dataset_id: int = Field(..., ge=1, description="BoneHub ID of the provider dataset")
-    source_scan_id: str = Field(..., description="ID of the scan in the provider's source")
-    handlers: CustomDataHandlers = Field(..., description="The provider's export handlers")
+    source_id: int = Field(..., ge=1, description="BoneHub ID of the source")
+    source_scan_id: str = Field(..., description="ID of the scan in that source")
+    handlers: CustomDataHandlers = Field(..., description="The source's export handlers")
 
 
 class ScanSource(_ProvidedData):
-    """One scan of a source subject: its metadata, the data the dataset being converted gives it, and the
-    contributions of other datasets. source_scan_id is None for a scan this dataset gives no data of its own."""
+    """One scan of a source subject: its metadata, the data the source being converted gives it, and the
+    contributions of other sources. source_scan_id is None for a scan this source gives no data of its own."""
 
-    info: ScanInfo = Field(..., description="Metadata of the scan; the providers are filled in by the converter")
+    info: ScanInfo = Field(..., description="Metadata of the scan")
     registered_to: str | None = Field(
         None, description="key of the scan of the same subject this image is registered to"
     )
-    contributions: list[Contribution] = Field(default_factory=list, description="The data of other provider datasets")
+    contributions: list[Contribution] = Field(default_factory=list, description="The data of other sources")
 
     @property
     def key(self) -> str:
         """The scan's ID among the scans read from the source: its source_scan_id, or for a scan without data of the
-        converted dataset, '<provider key>:<source_scan_id>' of the contribution of its image (or its first)."""
+        converted source, '<source ID>:<source_scan_id>' of the contribution of its image (or its first)."""
         if self.source_scan_id is not None:
             return self.source_scan_id
         with_image = [c for c in self.contributions if c.image_path is not None]
         first = (with_image or self.contributions)[0]
-        return f"{layout.provider_key(first.dataset_id)}:{first.source_scan_id}"
+        return f"{first.source_id}:{first.source_scan_id}"
 
     def check(self) -> None:
         """Raise ValueError if the scan's data does not add up."""
         if self.source_scan_id is None:
             if self.has_data():
-                raise ValueError("A scan with data of the converted dataset needs its source_scan_id.")
+                raise ValueError("A scan with data of the converted source needs its source_scan_id.")
             if not self.contributions:
                 raise ValueError("A scan needs a source_scan_id or at least one contribution.")
-        providers = [c.dataset_id for c in self.contributions]
-        if len(set(providers)) != len(providers):
-            raise ValueError(f"Scan '{self.key}' has two contributions of the same dataset: {providers}.")
+        sources = [c.source_id for c in self.contributions]
+        if len(set(sources)) != len(sources):
+            raise ValueError(f"Scan '{self.key}' has two contributions of the same source: {sources}.")
         images = (self.image_path is not None) + sum(c.image_path is not None for c in self.contributions)
         if images > 1:
             raise ValueError(f"Scan '{self.key}' has {images} images; a scan has one.")
 
 
 class SubjectSource(BaseModel):
-    """One subject of the source dataset and its scans. other_sources gives the subject's ID in the provider datasets
-    whose contributions its scans hold."""
+    """One subject of the source and its scans. other_sources gives the subject's ID in the other sources whose
+    contributions its scans hold."""
 
     info: SubjectInfo = Field(default_factory=SubjectInfo, description="gender and remarks; sources are filled in")
-    source_subject_id: str = Field(..., description="ID of the subject in the source of the converted dataset")
+    source_subject_id: str = Field(..., description="ID of the subject in the converted source")
     other_sources: dict[int, str] = Field(default_factory=dict, description="BoneHub ID -> the subject's ID there")
     scans: list[ScanSource] = Field(..., min_length=1)
 
@@ -224,6 +227,7 @@ def order_subjects(subjects: list[SubjectSource]) -> list[SubjectSource]:
             key=lambda scan: (
                 scan.info.days_from_baseline is None,
                 scan.info.days_from_baseline or 0,
+                scan.source_scan_id is None,  # the converted source's own scans before those of other sources
                 natural_key(scan.key),
             ),
         )
@@ -272,9 +276,9 @@ def _voxel_map(image_grid: tuple, other_grid: tuple) -> np.ndarray | None:
     return np.column_stack([matrix, offset])
 
 
-def _align_to_image(scan_path: Path, providers: dict) -> None:
-    """Put each provider's segmentation on the grid of the scan's image, so that the data of all datasets describe the
-    same voxels. A segmentation that holds the image's voxels in another order (a flipped axis) or with a slightly
+def _align_to_image(scan_path: Path) -> None:
+    """Put each segmentation on the grid of the scan's image, so that the data of all sources describe the same
+    voxels. A segmentation that holds the image's voxels in another order (a flipped axis) or with a slightly
     different origin (less than half a voxel: header rounding) is written again on the image grid; nearest-neighbour
     resampling then moves each voxel to its image voxel without changing any label. Raise if a segmentation is on
     another grid."""
@@ -282,15 +286,16 @@ def _align_to_image(scan_path: Path, providers: dict) -> None:
     if not image.is_file():
         return
     image_grid = _grid(image)
-    for key in providers:
-        path = layout.segmentation_file(scan_path, layout.parse_provider_key(key))
-        if not path.is_file():
+    for entry in sorted(scan_path.iterdir()):
+        parsed = layout.parse_scan_entry(entry.name)
+        if parsed is None or parsed[0] != "segmentation" or parsed[2] != "data":
             continue
+        path = entry
         other_grid = _grid(path)
         voxel_map = _voxel_map(image_grid, other_grid)
         if voxel_map is None:
             raise ValueError(
-                f"The segmentation of {key} in '{scan_path}' is not on the grid of the scan's image: size, spacing, "
+                f"{path.name} in '{scan_path}' is not on the grid of the scan's image: size, spacing, "
                 f"origin and direction are {tuple(v.ravel().tolist() for v in other_grid)} instead of "
                 f"{tuple(v.ravel().tolist() for v in image_grid)}."
             )
@@ -356,18 +361,35 @@ def _format_ids(ids: list[int], limit: int = 20) -> str:
 
 class DatasetConverter:
     """
-    Base class for converting a source dataset into a BoneHub-format dataset.
+    Base class for converting a source dataset into a dataset of a BoneHub-format database.
     Args:
         dataset_root (Path): The root directory of the source dataset.
-        dataset_info (DatasetInfo): Information about the dataset, written to dataset.json.
+        source_id (int): The source's BoneHub ID in the registry.
+        source (SourceInfo): The source and how it is converted.
+        other_sources (dict): BoneHub ID -> SourceInfo of every other source whose data the scans take in
+            (Contribution.source_id).
+        name (str): Name of the dataset; the source's by default.
+        description (str): How the dataset is made from its sources, where it is not one source.
+    The dataset's information (dataset.json) is `dataset_info`.
     """
 
     # Default number of subjects converted at once; converters that need much memory per subject set fewer.
     max_workers: int = DEFAULT_MAX_WORKERS
 
-    def __init__(self, dataset_root: Path, dataset_info: DatasetInfo):
+    def __init__(
+        self,
+        dataset_root: Path,
+        source_id: int,
+        source: SourceInfo,
+        other_sources: dict[int, SourceInfo] | None = None,
+        name: str | None = None,
+        description: str | None = None,
+    ):
         self.dataset_root = Path(dataset_root)
-        self.dataset_info = dataset_info
+        self.source_id = source_id
+        self.dataset_info = DatasetInfo(
+            name=name or source.name, description=description, sources={source_id: source, **(other_sources or {})}
+        )
         self.custom_data_handlers = CustomDataHandlers()
         self.logger = logging.getLogger(self.__class__.__name__)
 
@@ -390,7 +412,7 @@ class DatasetConverter:
         Convert the source into <output_root>/ds-<output_dataset_id>.
         Args:
             output_root (Path): The root folder of the database to write the dataset into.
-            output_dataset_id (int): The dataset's BoneHub ID in the registry; the folder is ds-<ID, 4 digits>.
+            output_dataset_id (int): The dataset's number in the database; the folder is ds-<number, 4 digits>.
             overwrite (bool): Delete an existing dataset folder of this ID and convert everything again.
             resume (bool): Keep the subjects an earlier run of this conversion finished and convert the rest, e.g.
                 those that failed. The source must still list the same subjects.
@@ -449,10 +471,12 @@ class DatasetConverter:
         scan_count = sum(len(subject.scans) for subject in subjects)
         self.logger.info(f"Found {len(subjects)} subjects with {scan_count} scans.")
         if not subjects:
-            self.logger.warning(
-                "The source lists no subjects of this dataset (all of them may live in other datasets, which this one "
-                "provides data to); only dataset.json is written."
-            )
+            raise ValueError("The source lists no subjects; a dataset without subjects is not written.")
+        used = {c.source_id for subject in subjects for scan in subject.scans for c in scan.contributions}
+        used |= {source_id for subject in subjects for source_id in subject.other_sources}
+        missing = sorted(used - set(self.dataset_info.sources))
+        if missing:
+            raise ValueError(f"The scans take in data of sources {missing}, which other_sources does not describe.")
 
         finished = self._finished_subjects(dataset_path, subjects) if resume and dataset_path.exists() else set()
         if finished:
@@ -551,7 +575,7 @@ class DatasetConverter:
             subject_json = entry / layout.SUBJECT_JSON
             if not subject_json.is_file():
                 continue  # not finished: it is converted again
-            previous = SubjectInfo.load(subject_json).sources.get(dataset_path.name)
+            previous = SubjectInfo.load(subject_json).sources.get(self.source_id)
             expected = subjects[subject_id - 1].source_subject_id
             if previous != expected:
                 raise ValueError(
@@ -566,66 +590,73 @@ class DatasetConverter:
         subject_path = dataset_path / layout.subject_dir_name(subject_id)
         if subject_path.exists():
             shutil.rmtree(subject_path)  # left unfinished by an earlier run
-        home = layout.parse_dataset_dir(dataset_path.name)
         scan_names = {scan.key: layout.scan_dir_name(i) for i, scan in enumerate(subject.scans, start=1)}
         try:
             for scan in subject.scans:
-                self._convert_scan(scan, subject_path / scan_names[scan.key], scan_names, home)
+                self._convert_scan(scan, subject_path / scan_names[scan.key], scan_names)
             info = subject.info.model_copy(deep=True)
-            sources = {layout.provider_key(dataset_id): value for dataset_id, value in subject.other_sources.items()}
-            info.sources = {**sources, layout.provider_key(home): subject.source_subject_id}
+            info.sources = {**subject.other_sources, self.source_id: subject.source_subject_id}
             info.save(subject_path / layout.SUBJECT_JSON)
         except BaseException:
             shutil.rmtree(subject_path, ignore_errors=True)
             raise
         self.logger.info(f"Converted subject {subject_id} ('{subject.source_subject_id}', {len(subject.scans)} scans).")
 
-    def _convert_scan(self, scan: ScanSource, scan_path: Path, scan_names: dict[str, str], home: int) -> None:
+    def _convert_scan(self, scan: ScanSource, scan_path: Path, scan_names: dict[str, str]) -> None:
         scan_path.mkdir(parents=True)
         info = scan.info  # the handlers may add to it, e.g. remarks on how the image was made
-        parts = [(home, scan, self.custom_data_handlers)] if scan.source_scan_id is not None else []
-        parts += [(c.dataset_id, c, c.handlers) for c in scan.contributions]
-        providers = {}
-        for dataset_id, data, handlers in parts:
-            providers[layout.provider_key(dataset_id)] = self._export_provided(data, handlers, scan_path, dataset_id)
-            if data.image_path is not None:
-                info.image = layout.provider_key(dataset_id)
-        info.providers = providers
-        _align_to_image(scan_path, providers)
+        parts = [(self.source_id, scan, self.custom_data_handlers)] if scan.source_scan_id is not None else []
+        parts += [(c.source_id, c, c.handlers) for c in scan.contributions]
+        numbers = dict.fromkeys(layout.LABELED_KINDS, 0)  # the files of each kind written so far
+        for source_id, data, handlers in parts:
+            self._export_provided(data, handlers, scan_path, source_id, numbers)
+        _align_to_image(scan_path)
         if scan.registered_to is not None:
             info.registered_to = scan_names[scan.registered_to]
         pack_scan(scan_path)
         info.save(scan_path / layout.SCAN_JSON)
 
-    def _export_provided(self, data, handlers: CustomDataHandlers, scan_path: Path, dataset_id: int) -> ProviderInfo:
-        """Write the files one provider gives a scan, named after it; return its entry of scan.json."""
-        provider = ProviderInfo(
-            source_scan_id=data.source_scan_id,
-            subset=data.subset,
-            source_split=data.source_split,
-            license=data.license,
-            remarks=data.remarks,
-        )
-        where = f"Scan '{data.source_scan_id}' of {layout.provider_key(dataset_id)}"
+    def _export_provided(
+        self, data, handlers: CustomDataHandlers, scan_path: Path, source_id: int, numbers: dict[str, int]
+    ) -> None:
+        """Write the files one source gives a scan, each with its JSON file; number them after those of the sources
+        before (`numbers`, updated)."""
+        where = f"Scan '{data.source_scan_id}' of source {source_id}"
+
+        def file_info(kind: str, model=FileInfo):
+            return model(
+                source=source_id,
+                source_scan_id=data.source_scan_id,
+                subset=data.subset,
+                source_split=data.source_split,
+                license=data.license.of(kind) if data.license else None,
+                remarks=data.remarks,
+            )
 
         if data.image_path is not None:
-            image_path = scan_path / layout.IMAGE_FILE
+            image_path = layout.data_file(scan_path, "image")
+            if image_path.exists():
+                raise ValueError(f"{where} gives an image, but the scan has one already.")
             handlers.export_image(data, image_path)
             if not image_path.is_file():
                 raise RuntimeError(f"export_image wrote no image for {where}.")
+            file_info("image").save(layout.data_json(scan_path, "image"))
 
         if data.segmentation_paths:
             if handlers.export_segmentation is None:
                 raise ValueError(f"{where} has segmentation files, but no export_segmentation handler is set.")
-            segmentation_path = layout.segmentation_file(scan_path, dataset_id)
+            number = numbers["segmentation"] + 1
+            segmentation_path = layout.data_file(scan_path, "segmentation", number)
             handlers.export_segmentation(data, segmentation_path)
             labels = read_segmentation_labels(segmentation_path) if segmentation_path.is_file() else []
-            if not labels:
+            if labels:
+                info = file_info("segmentation", LabeledFileInfo)
+                info.set_labels(labels, {label: _origin(data.segmentation_origin, label, "segmentation") for label in labels})
+                info.save(layout.data_json(scan_path, "segmentation", number))
+                numbers["segmentation"] = number
+            else:
                 segmentation_path.unlink(missing_ok=True)
                 self.logger.warning(f"{where}: its segmentation holds no labels and is left out.")
-            provider.set_labels(
-                "segmentation", labels, {label: _origin(data.segmentation_origin, label, "segmentation") for label in labels}
-            )
 
         for kind in layout.MODEL_KINDS:
             if not getattr(data, f"{kind}_paths"):
@@ -633,13 +664,17 @@ class DatasetConverter:
             handler = getattr(handlers, f"export_{kind}")
             if handler is None:
                 raise ValueError(f"{where} has {kind} files, but no export_{kind} handler is set.")
-            folder = layout.model_folder(scan_path, kind, dataset_id)
+            number = numbers[kind] + 1
+            folder = layout.model_folder(scan_path, kind, number)
             folder.mkdir()
             handler(data, folder)
             labels = sorted({path.stem for path in model_folder_files(folder, kind)})
-            if not labels:
+            if labels:
+                origin = getattr(data, f"{kind}_origin")
+                info = file_info(kind, LabeledFileInfo)
+                info.set_labels(labels, {label: _origin(origin, label, kind) for label in labels})
+                info.save(layout.data_json(scan_path, kind, number))
+                numbers[kind] = number
+            else:
                 shutil.rmtree(folder)
                 self.logger.warning(f"{where}: no {kind} files were written.")
-            origin = getattr(data, f"{kind}_origin")
-            provider.set_labels(kind, labels, {label: _origin(origin, label, kind) for label in labels})
-        return provider

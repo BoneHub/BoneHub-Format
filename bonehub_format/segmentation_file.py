@@ -1,4 +1,4 @@
-"""Reading and writing BoneHub segmentation masks (`.seg.nrrd`).
+"""Reading and writing BoneHub segmentation masks (`.nrrd` files with 3D Slicer segment fields in their header).
 
 Voxels hold per-file segment numbers (1, 2, 3 ...; uint8, or uint16 above 255 segments), as
 in 3D Slicer's own segmentation files. The header maps each number to its LabelMap
@@ -68,7 +68,7 @@ def write_segmentation(
 
     array: voxel array of LabelMap values, 0 for background.
     reference_image: image whose geometry (spacing, origin, direction) the mask shares.
-    output_path: destination, ending in `.seg.nrrd`.
+    output_path: destination, ending in `.nrrd`.
     Returns the names of the labels present in the mask.
     """
     np, _ = _io_modules()
@@ -180,7 +180,7 @@ def read_segmentation(path: Path) -> sitk.Image:
 
 
 def read_segmentation_header(path: Path) -> tuple[dict[str, str], dict[str, str]]:
-    """The fields ('sizes', 'type', ...) and the key/value pairs ('Segment0_Name', ...) of a `.seg.nrrd` header.
+    """The fields ('sizes', 'type', ...) and the key/value pairs ('Segment0_Name', ...) of a segmentation header.
 
     Reads only the plain-text header at the start of the file, without numpy or SimpleITK.
     """

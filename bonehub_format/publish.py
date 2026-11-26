@@ -1,14 +1,14 @@
 """The files that make a database a Hugging Face dataset repository.
 
     README.md        the dataset card: what the data is, how it is laid out and how to download parts of it
-    LICENSE.md       the licenses of each dataset per kind of data, and of the subsets and scans that have their own
+    LICENSE.md       the licenses of each source per kind of data, and of the subsets and files that have their own
     .gitattributes   which files Hugging Face stores as large files
     .gitignore       what stays out of the upload: upload.md, logs, the per-label model folders (their zips are
                      uploaded) and every file whose license is restricted or not known
     upload.md        how to upload the database; it is not uploaded itself
 
-Whether a file is published is decided per file, from the license of its kind of data and its provider (see
-reader.Scan.license): a scan can publish its segmentation and keep its restricted image back.
+Whether a file is published is decided per file, from its license (see reader.DataFile.license): a scan can publish
+its segmentation and keep its restricted image back. The JSON files are always published.
 
 write_hub_files() writes them all from the metadata, after build_index() has written the index the card points to.
 """
@@ -65,26 +65,14 @@ def _license_link(value: str | None) -> str:
 
 
 def scan_files(scan) -> list[tuple[str, str, int, str | None]]:
-    """(file name, kind, provider dataset ID, license) of every data file of a scan that would be published: the
-    image, and each provider's segmentation and model zips."""
-    files = []
-    if scan.image_path is not None:
-        files.append((layout.IMAGE_FILE, "image", scan.info.image_provider, scan.license("image")))
-    for dataset_id in scan.provider_ids:
-        provider = scan.info.provider(dataset_id)
-        if provider.labels("segmentation"):
-            path = layout.segmentation_file(scan.path, dataset_id)
-            files.append((path.name, "segmentation", dataset_id, scan.license("segmentation", dataset_id)))
-        for kind in layout.MODEL_KINDS:
-            if provider.labels(kind):
-                path = layout.model_zip(scan.path, kind, dataset_id)
-                files.append((path.name, kind, dataset_id, scan.license(kind, dataset_id)))
-    return files
+    """(file name, kind, source, license) of every data file of a scan that would be published: the image, the
+    segmentations and the model zips."""
+    return [(data.path.name, data.kind, data.source, data.license()) for data in scan.files()]
 
 
 def _withheld(root: Database) -> list[str]:
     """The data files that are not published (restricted or unknown license), as paths relative to the root; a file
-    name withheld in every scan of a dataset is given as one pattern, e.g. ds-0040/*/*/image.nii.gz."""
+    name withheld in every scan of a dataset is given as one pattern, e.g. ds-0003/*/*/image.nii.gz."""
     by_name: dict[tuple[str, str], list[tuple[str, bool]]] = {}  # (dataset folder, file name) -> (scan key, published)
     for scan in root.scans():
         for name, _, _, license in scan_files(scan):
@@ -111,7 +99,7 @@ def excluded_from_upload(root: Path) -> list[tuple[str, str]]:
         (".bonehub_qc/", ".bonehub_qc/*"),
         ("__pycache__/", "*__pycache__/*"),
         ("*.tmp", "*.tmp"),
-        *((f"**/{kind}.ds-*/", f"*/{kind}.ds-*/*") for kind in layout.MODEL_KINDS),
+        *((f"**/{kind}-*/", f"*/{kind}-*/*") for kind in layout.MODEL_KINDS),
     ]
     excluded += [(f"/{path}", path) for path in _withheld(reader)]
     return excluded
@@ -124,8 +112,8 @@ def _gitignore(root: Database) -> str:
         "# to Hugging Face explicitly, because its upload does not read this file.",
     ]
     for pattern, _ in excluded_from_upload(root):
-        if pattern == "**/mesh.ds-*/":
-            lines.append("# Per-label model files: their zips (mesh.ds-NNNN.zip, nurbs.ds-NNNN.zip) are uploaded instead")
+        if pattern == "**/mesh-*/":
+            lines.append("# Per-label model files: their zips (mesh-N.zip, nurbs-N.zip) are uploaded instead")
         elif pattern.startswith("/ds-") and not any(line.startswith("# Not published") for line in lines):
             lines.append(f"# Not published: files under a restricted license ('{RESTRICTED}') or with no known license")
         lines.append(pattern)
@@ -158,32 +146,46 @@ class _Summary:
         self.scans = list(root.scans())
         self.by_dataset = Counter(scan.dataset.id for scan in self.scans)
         self.subjects_by_dataset = Counter(dataset_id for dataset_id, _ in {(s.dataset.id, s.subject.id) for s in self.scans})
-        self.provided = Counter(dataset_id for scan in self.scans for dataset_id in scan.provider_ids)
         self.modalities = Counter(scan.info.modality or "unknown" for scan in self.scans)
-        self.kind_counts = {kind: sum(len(scan.info.labels(kind)) for scan in self.scans) for kind in LABEL_KINDS}
-        # (provider dataset ID, kind) -> (files published, files withheld)
+        self.kind_counts = {kind: sum(len(scan.labels(kind)) for scan in self.scans) for kind in LABEL_KINDS}
+        # (dataset ID, source, kind) -> files, files withheld
         self.files = Counter()
         self.withheld = Counter()
-        self.scan_licenses = Counter()  # (provider, kind, license) of scans and subsets with a license of their own
+        self.file_licenses = Counter()  # (dataset ID, source, kind, license) of files under a subset's or their own
         for scan in self.scans:
-            for _, kind, dataset_id, license in scan_files(scan):
-                self.files[(dataset_id, kind)] += 1
+            for data in scan.files():
+                key = (scan.dataset.id, data.source, data.kind)
+                license = data.license()
+                self.files[key] += 1
                 if not is_publishable(license):
-                    self.withheld[(dataset_id, kind)] += 1
-                provider = scan.info.provider(dataset_id)
-                if provider is not None and (provider.license and provider.license.of(kind) or provider.subset):
-                    self.scan_licenses[(dataset_id, kind, license)] += 1
-        self.restricted = [d for d in self.datasets if any(self.withheld[(d.id, kind)] for kind in LICENSE_KINDS)]
+                    self.withheld[key] += 1
+                if data.info.license is not None or data.info.subset is not None:
+                    self.file_licenses[(*key, license)] += 1
+        self.restricted = [
+            (dataset, source_id, source)
+            for dataset in self.datasets
+            for source_id, source in dataset.info.sources.items()
+            if any(self.withheld[(dataset.id, source_id, kind)] for kind in LICENSE_KINDS)
+        ]
+
+    def withheld_text(self, dataset_id: int, source_id: int) -> str:
+        counts = [(kind, self.withheld[(dataset_id, source_id, kind)]) for kind in LICENSE_KINDS]
+        return ", ".join(f"{count} {kind}" for kind, count in counts if count)
 
 
-def _licenses_text(info) -> str:
-    """A dataset's licenses per kind, in one cell: one license if all kinds share it."""
-    if info.license is None:
+def _licenses_text(source) -> str:
+    """A source's licenses per kind, in one cell: one license if all kinds share it."""
+    if source.license is None:
         return "not given"
-    given = {kind: info.license.of(kind) for kind in LICENSE_KINDS if info.license.of(kind) is not None}
+    given = {kind: source.license.of(kind) for kind in LICENSE_KINDS if source.license.of(kind) is not None}
     if len(set(given.values())) == 1:
         return _license_link(next(iter(given.values())))
     return "; ".join(f"{kind}: {_license_link(value)}" for kind, value in given.items()) or "not given"
+
+
+def _sources_text(info) -> str:
+    """The sources of a dataset, each linked to its registry entry."""
+    return "<br>".join(f"[{source_id}]({registry_entry_url(source_id)}) {source.name}" for source_id, source in info.sources.items())
 
 
 def _card(root: Database, summary: _Summary, repo_id: str, title: str, description: str | None, homepage: str | None) -> str:
@@ -206,10 +208,8 @@ def _card(root: Database, summary: _Summary, repo_id: str, title: str, descripti
         "- config_name: scans",
         f"  data_files: {layout.INDEX_DIR}/{INDEX_FILES['scans']}",
         "  default: true",
-        "- config_name: labels",
-        f"  data_files: {layout.INDEX_DIR}/{INDEX_FILES['labels']}",
-        "- config_name: datasets",
-        f"  data_files: {layout.INDEX_DIR}/{INDEX_FILES['datasets']}",
+        *(line for name in ("files", "labels", "datasets", "sources")
+          for line in (f"- config_name: {name}", f"  data_files: {layout.INDEX_DIR}/{INDEX_FILES[name]}")),
         "---",
     ]
 
@@ -217,17 +217,17 @@ def _card(root: Database, summary: _Summary, repo_id: str, title: str, descripti
     modalities = ", ".join(f"{count} {modality}" for modality, count in summary.modalities.most_common())
     kinds = ", ".join(f"{count} {kind} labels" for kind, count in summary.kind_counts.items() if count)
     rows = [
-        "| ID | Dataset | Subjects | Scans | Data in scans | License | Source |",
-        "|---|---|---|---|---|---|---|",
+        "| Dataset | Name | Sources (BoneHub registry) | Subjects | Scans | Licenses |",
+        "|---|---|---|---|---|---|",
     ]
     for dataset in summary.datasets:
         info = dataset.info
-        source = " ".join(f"[{name}]({url})" for name, url in (("data", info.url), ("paper", info.paper)) if url)
+        licenses = "<br>".join(f"{source_id}: {_licenses_text(source)}" for source_id, source in info.sources.items())
         rows.append(
-            f"| [{dataset.id}]({registry_entry_url(dataset.id)}) | {info.name} | {summary.subjects_by_dataset[dataset.id]} "
-            f"| {summary.by_dataset[dataset.id]} | {summary.provided[dataset.id]} "
-            f"| {_licenses_text(info)} | {source} |"
+            f"| {dataset.path.name} | {info.name} | {_sources_text(info)} | {summary.subjects_by_dataset[dataset.id]} "
+            f"| {summary.by_dataset[dataset.id]} | {licenses} |"
         )
+    sources = sorted({source_id for dataset in summary.datasets for source_id in dataset.info.sources})
 
     body = [
         f"# {title}",
@@ -235,7 +235,8 @@ def _card(root: Database, summary: _Summary, repo_id: str, title: str, descripti
         description or f"3D bone data in the [BoneHub format]({FORMAT_URL}): medical images, bone segmentations and "
         "the meshes and NURBS surfaces derived from them, converted from public datasets.",
         "",
-        f"{len(summary.datasets)} datasets, {subjects} subjects and {len(summary.scans)} scans ({modalities}); {kinds}."
+        f"{len(summary.datasets)} datasets made from {len(sources)} source datasets of the [BoneHub registry]"
+        f"({REGISTRY_PAGE_URL}), with {subjects} subjects and {len(summary.scans)} scans ({modalities}); {kinds}."
         + (f" Website: {homepage}" if homepage else ""),
         "",
         "## Datasets",
@@ -243,20 +244,13 @@ def _card(root: Database, summary: _Summary, repo_id: str, title: str, descripti
         *rows,
         "",
     ]
-    body += [
-        "*Subjects* and *Scans* count the people and scans that live in a dataset's folder; *Data in scans* counts the "
-        "scans, in any folder, that hold data the dataset provided (see *Merged datasets* below).",
-        "",
-    ]
     if summary.restricted:
-        lines = []
-        for dataset in summary.restricted:
-            kinds = [f"{summary.withheld[(dataset.id, kind)]} {kind}" for kind in LICENSE_KINDS if summary.withheld[(dataset.id, kind)]]
-            lines.append(f"- {dataset.id} ({dataset.info.name}): {', '.join(kinds)} files")
+        lines = [f"- {dataset.path.name}, source {source_id} ({source.name}): {summary.withheld_text(dataset.id, source_id)} files"
+                 for dataset, source_id, source in summary.restricted]
         body += [
             "Some files are under a restricted license (or none is known), so they are listed in the index but not in "
-            "this repository; the `published` and `image_published` columns of the index say which. Obtain them from "
-            "their source and convert them with the BoneHub-Format package:",
+            "this repository; the `published` column of `index/files.parquet` says which. Obtain them from their "
+            "source and convert them with the BoneHub-Format package:",
             "",
             *lines,
             "",
@@ -265,27 +259,41 @@ def _card(root: Database, summary: _Summary, repo_id: str, title: str, descripti
         "## Layout",
         "",
         "```",
-        "ds-0040/                                 a source dataset, named after its BoneHub ID",
-        "├── dataset.json                         source, licenses, which labels its segmentations cover",
-        "└── sub-000001/                          a subject (person)",
-        "    ├── subject.json                     the subject's ID in each dataset, gender",
-        "    └── scan-01/                         a scan of the subject",
-        "        ├── scan.json                    modality, age, weight, height; per provider: ID, labels, origin",
-        "        ├── image.nii.gz",
-        "        ├── segmentation.ds-0040.seg.nrrd   the segmentation each provider dataset gave",
-        "        ├── segmentation.ds-0018.seg.nrrd",
-        "        ├── mesh.ds-0040.zip             <LABEL>.stl",
-        "        └── nurbs.ds-0040.zip            <LABEL>.iges / <LABEL>.step",
-        "index/                                   Parquet tables of all datasets, scans and labels",
+        "ds-0001/                         a dataset, numbered within this database",
+        "├── dataset.json                 its sources (registry datasets): names, links, licenses, labels covered",
+        "└── sub-000001/                  a subject (person)",
+        "    ├── subject.json             gender, the subject's ID in each source",
+        "    └── scan-01/                 a scan of the subject",
+        "        ├── scan.json            modality, age, weight, height, ...",
+        "        ├── image.nii.gz         + image.json           the source of the image, its ID there",
+        "        ├── segmentation-1.nrrd  + segmentation-1.json  its source, labels and their origin",
+        "        ├── segmentation-2.nrrd  + segmentation-2.json  another source's segmentation of the same image",
+        "        ├── mesh-1.zip           + mesh-1.json          <LABEL>.stl",
+        "        └── nurbs-1.zip          + nurbs-1.json         <LABEL>.iges / <LABEL>.step",
+        "index/                           Parquet tables of the datasets, sources, scans, files and labels",
         "```",
         "",
         "A folder's name is its ID. The index (also shown in the dataset viewer above) holds every field of the "
         "metadata files, plus image size and voxel spacing, the structures that touch the image border, and the "
-        "license of each file.",
+        "path, size and license of every file.",
         "",
-        "## Downloading part of the data",
+        "## Downloading",
         "",
-        "Choose scans in the index, then download only their files:",
+        "Everything (published files only):",
+        "",
+        "```",
+        f"hf download {repo_id} --repo-type dataset --local-dir data",
+        "```",
+        "",
+        "One dataset, e.g. the images and segmentations of ds-0001:",
+        "",
+        "```",
+        f'hf download {repo_id} --repo-type dataset --local-dir data --include "ds-0001/*.json" '
+        '--include "ds-0001/*/*.json" --include "ds-0001/*/*/*.json" --include "ds-0001/*/*/image.nii.gz" '
+        '--include "ds-0001/*/*/segmentation-*.nrrd"',
+        "```",
+        "",
+        "Or choose scans in the index and download only their files:",
         "",
         "```python",
         "import pandas as pd",
@@ -299,49 +307,54 @@ def _card(root: Database, summary: _Summary, repo_id: str, title: str, descripti
         ")",
         "```",
         "",
-        "or with the command line, e.g. every image and segmentation of dataset 27:",
-        "",
-        "```",
-        f'hf download {repo_id} --repo-type dataset --local-dir data --include "ds-0027/*/image.nii.gz" '
-        '--include "ds-0027/*/segmentation.*.seg.nrrd" --include "ds-0027/*.json"',
-        "```",
-        "",
-        "## Conventions",
-        "",
-        f"- **Labels** are the names of the [BoneHub label map]({LABEL_MAP_URL}). Segmentations are 3D Slicer "
-        "segmentation files (`.seg.nrrd`); open them in 3D Slicer, or read them with `bonehub_format.read_segmentation`.",
-        "- **Providers**: the data of a scan can come from several datasets. Each file is named after the dataset "
-        "that provided it (`segmentation.ds-0018.seg.nrrd`); `scan.json` lists every provider with the scan's ID in "
-        "it, the labels it gave and the dataset the image came from. Where two providers segmented the same "
-        "structure, both versions are kept.",
-        "- **Origin**: every label of a provider says how that dataset came by it: `source` (its source dataset), "
-        "`manual`, `model:<name>@<version>` or `derived:<tool>@<version>` (made from another file of the scan, "
-        "e.g. a mesh from the segmentation).",
-        "- **Coordinates**: meshes and NURBS surfaces are in the physical space of the image, in LPS and millimetres.",
-        "- **Coverage**: `annotated_labels` in `dataset.json` lists the labels a dataset's segmentations cover. In a scan "
-        "with a segmentation, a covered label that is missing is absent from the image; other labels were not segmented.",
-        f"- **IDs**: a dataset's ID is its BoneHub ID in the [BoneHub registry]({REGISTRY_PAGE_URL}), the same in every "
-        "BoneHub database; each ID in the table above links to its registry entry.",
-        "- **Merged datasets**: each person is stored once. Where several source datasets hold the same person or "
-        "image, their data is merged into one subject, which lives in one of them (its home) and lists its ID in "
-        "the others in `subject.json`. `derived_from` in `dataset.json` names the datasets a dataset was made from.",
-        "",
-        "## Licenses",
-        "",
-        "Each file keeps the license of the dataset that provided it, per kind of data (image, segmentation, mesh, "
-        "NURBS): see [LICENSE.md](LICENSE.md), and the `image_license` and `license` columns of the index. Cite the "
-        "source datasets you use.",
+        "Single files can be downloaded from the browser too: every file has a direct link, "
+        f"`https://huggingface.co/datasets/{repo_id}/resolve/main/<path>?download=true`, with `<path>` from the `path` "
+        "column of `index/files.parquet` (the database's webpage lists them per scan).",
         "",
         "## Reading the data with Python",
         "",
+        f"`pip install bonehub-format @ git+{FORMAT_URL}.git`",
+        "",
         "```python",
-        "from bonehub_format import Database",
+        "from bonehub_format import Database, read_segmentation",
         "",
         'for scan in Database("data").scans():',
-        '    print(scan.key, scan.info.modality, scan.image_path, scan.segmentation_paths())',
+        "    print(scan.key, scan.info.modality, scan.info.age, scan.image_path)",
+        '    for segmentation in scan.files("segmentation"):',
+        "        mask = read_segmentation(segmentation.path)   # SimpleITK image of LabelMap values",
+        "        print(segmentation.source, segmentation.labels, segmentation.license())",
+        '    for mesh in scan.files("mesh"):',
+        "        for label, files in mesh.model_files().items():   # read from the zip",
+        "            stl_bytes = files[0].read_bytes()",
         "```",
         "",
-        f"`pip install bonehub-format @ git+{FORMAT_URL}.git`",
+        "Without the package, the files are plain NIfTI, NRRD, STL, IGES and STEP files and JSON: the voxels of a "
+        "segmentation hold segment numbers, which its NRRD header maps to label names (`Segment<i>_Name`) and LabelMap "
+        "values (`Segment<i>_LabelValue`).",
+        "",
+        "## Conventions",
+        "",
+        f"- **Labels** are the names of the [BoneHub label map]({LABEL_MAP_URL}).",
+        "- **Sources**: a dataset is made from one or more datasets of the "
+        f"[BoneHub registry]({REGISTRY_PAGE_URL}), its sources, listed in its `dataset.json` by their BoneHub ID. "
+        "Every data file has a JSON file of the same name that names its source and the scan's ID there.",
+        "- **Several versions**: where two sources segmented the same structure of a scan, both are kept, as "
+        "`segmentation-1.nrrd` and `segmentation-2.nrrd`; the files of a kind are numbered within the scan.",
+        "- **Origin**: every label says how its source came by it: `source` (with the source dataset), "
+        "`manual`, `model:<name>@<version>` or `derived:<tool>@<version>` (made from another file of the scan, "
+        "e.g. a mesh from the segmentation).",
+        "- **Coordinates**: meshes and NURBS surfaces are in the physical space of the image, in LPS and millimetres.",
+        "- **Coverage**: `annotated_labels` of a source in `dataset.json` lists the labels its segmentations cover. In a "
+        "scan with a segmentation of that source, a covered label that is missing is absent from the image; other "
+        "labels were not segmented.",
+        "- **One subject, one person**: each person is stored once. Where several sources hold the same person or "
+        "image, their data is merged into one subject, whose `subject.json` gives its ID in each of them.",
+        "",
+        "## Licenses",
+        "",
+        "Each file keeps the license of its source, for its kind of data (image, segmentation, mesh, NURBS), or of the "
+        "source's collection it belongs to: see [LICENSE.md](LICENSE.md), and the `license` column of "
+        "`index/files.parquet`. Cite the source datasets you use; their registry entries link their papers.",
         "",
     ]
     return "\n".join(yaml + body)
@@ -351,42 +364,45 @@ def _license_file(summary: _Summary) -> str:
     lines = [
         "# Licenses",
         "",
-        "Each file is under the license of the dataset that provided it, for its kind of data: `image.nii.gz` under "
-        "the image license of the dataset the image came from, `segmentation.ds-NNNN.seg.nrrd` and the "
-        "`mesh.ds-NNNN.zip` / `nurbs.ds-NNNN.zip` files under the segmentation, mesh or NURBS license of dataset NNNN. "
-        "Subsets and scans with licenses of their own are listed below the table; `index/scans.parquet` "
-        "(`image_license`) and `index/labels.parquet` (`license`) give the license of every file.",
+        "Each file is under the license of its source (a dataset of the BoneHub registry, named in the file's JSON), "
+        "for its kind of data: `image.nii.gz` under the source's image license, `segmentation-N.nrrd` under its "
+        "segmentation license, `mesh-N.zip` and `nurbs-N.zip` under its mesh or NURBS license. Collections of a source "
+        "with terms of their own, and files with a license of their own, are listed below the table; "
+        "`index/files.parquet` (`license`) gives the license of every file.",
         "",
-        "| ID | Dataset | Image | Segmentation | Mesh | NURBS | Source |",
-        "|---|---|---|---|---|---|---|",
+        "| Dataset | Source | Name | Image | Segmentation | Mesh | NURBS | Link |",
+        "|---|---|---|---|---|---|---|---|",
     ]
     for dataset in summary.datasets:
-        info = dataset.info
-        cells = [_license_link(info.license.of(kind)) if info.license else "not given" for kind in LICENSE_KINDS]
-        lines.append(f"| {dataset.id} | {info.name} | {' | '.join(cells)} | {info.url or ''} |")
+        for source_id, source in dataset.info.sources.items():
+            cells = [_license_link(source.license.of(kind)) if source.license else "not given" for kind in LICENSE_KINDS]
+            lines.append(
+                f"| {dataset.path.name} | [{source_id}]({registry_entry_url(source_id)}) | {source.name} | {' | '.join(cells)} "
+                f"| {source.url or ''} |"
+            )
     subsets = [
-        f"| {dataset.id} | {name} | {subset.name} | "
-        + " | ".join(_license_link(subset.license.of(kind)) if subset.license and subset.license.of(kind) else "as the dataset" for kind in LICENSE_KINDS)
+        f"| {source_id} | {name} | {subset.name} | "
+        + " | ".join(_license_link(subset.license.of(kind)) if subset.license and subset.license.of(kind) else "as the source" for kind in LICENSE_KINDS)
         + f" | {subset.url or ''} |"
-        for dataset in summary.datasets
-        for name, subset in (dataset.info.subsets or {}).items()
+        for source_id, source in sorted({sid: src for d in summary.datasets for sid, src in d.info.sources.items()}.items())
+        for name, subset in (source.subsets or {}).items()
     ]
     if subsets:
         lines += [
             "",
-            "## Subsets with licenses of their own",
+            "## Collections with licenses of their own",
             "",
-            "| ID | Subset | Name | Image | Segmentation | Mesh | NURBS | Source |",
+            "| Source | Collection | Name | Image | Segmentation | Mesh | NURBS | Link |",
             "|---|---|---|---|---|---|---|---|",
             *subsets,
         ]
     overrides = [
-        f"- Dataset {dataset_id}, {kind}: {count} files under {_license_link(value)}"
+        f"- {layout.dataset_dir_name(dataset_id)}, source {source_id}, {kind}: {count} files under {_license_link(value)}"
         + ("" if is_publishable(value) else " (not published)")
-        for (dataset_id, kind, value), count in sorted(summary.scan_licenses.items(), key=lambda item: (item[0][0], item[0][1], str(item[0][2])))
+        for (dataset_id, source_id, kind, value), count in sorted(summary.file_licenses.items(), key=lambda item: tuple(map(str, item[0])))
     ]
     if overrides:
-        lines += ["", "## Files under the license of their subset or scan", "", *overrides]
+        lines += ["", "## Files under the license of their collection or their own", "", *overrides]
     if summary.restricted:
         lines += [
             "",
@@ -396,9 +412,11 @@ def _license_file(summary: _Summary) -> str:
             "listed in the index, but they are not in this repository; obtain them from their source.",
             "",
         ]
-        for dataset in summary.restricted:
-            kinds = [f"{summary.withheld[(dataset.id, kind)]} {kind}" for kind in LICENSE_KINDS if summary.withheld[(dataset.id, kind)]]
-            lines.append(f"- {dataset.id}: {dataset.info.name}: {', '.join(kinds)} files ({dataset.info.url or 'no URL given'})")
+        for dataset, source_id, source in summary.restricted:
+            lines.append(
+                f"- {dataset.path.name}, source {source_id} ({source.name}): {summary.withheld_text(dataset.id, source_id)} "
+                f"files ({source.url or 'no URL given'})"
+            )
     return "\n".join(lines) + "\n"
 
 
@@ -406,9 +424,10 @@ def _upload_guide(root: Path, summary: _Summary, repo_id: str, title: str) -> st
     size = 0
     for scan in summary.scans:
         size += (scan.path / layout.SCAN_JSON).stat().st_size
-        for name, _, _, license in scan_files(scan):
-            if is_publishable(license):
-                size += (scan.path / name).stat().st_size
+        for data in scan.files():
+            size += data.json_path.stat().st_size
+            if is_publishable(data.license()) and data.path.is_file():
+                size += data.path.stat().st_size
     return f"""# Uploading {title} to Hugging Face
 
 This file is listed in `.gitignore`, so it is not uploaded.
@@ -419,7 +438,7 @@ This file is listed in `.gitignore`, so it is not uploaded.
 python -m bonehub_format prepare "{root}" --repo-id {repo_id} --title "{title}"
 ```
 
-This brings the zips of the model folders (`mesh.ds-NNNN/`, `nurbs.ds-NNNN/`) up to date, rebuilds the index, checks the database, and writes
+This brings the zips of the model folders (`mesh-N/`, `nurbs-N/`) up to date, rebuilds the index, checks the database, and writes
 the card, `LICENSE.md`, `.gitattributes`, `.gitignore`, this file and `github-webpage/`. Fix any problem it reports
 before uploading.
 

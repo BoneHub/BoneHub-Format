@@ -10,13 +10,14 @@ import numpy as np
 import SimpleITK as sitk
 
 from bonehub_format import LabelMap as LM
-from bonehub_format import DatasetInfo, Licenses, ScanInfo, SubjectInfo
+from bonehub_format import Licenses, ScanInfo, SourceInfo, SubjectInfo
 from bonehub_format.converter import Contribution, CustomDataHandlers, DatasetConverter, ScanSource, SubjectSource
 from bonehub_format.export import export_nii_segmentation
 
 SHAPE = (12, 16, 16)  # z, y, x
 LABEL_MAPPING = {1: LM.FEMUR_LEFT.value, 2: LM.FEMUR_RIGHT.value}
-PROVIDER_ID = 7  # a second synthetic dataset, which gives every scan of the first a segmentation of its own
+SOURCE_ID = 3  # the synthetic source's BoneHub ID
+PROVIDER_ID = 7  # a second synthetic source, which gives every scan of the first a segmentation of its own
 PROVIDER_MAPPING = {1: LM.FEMUR_LEFT.value, 2: LM.GLUTEUS_MAXIMUS_RIGHT.value}
 FAIL_ON = "fail_me"  # a subject whose segmentation export raises
 
@@ -75,14 +76,14 @@ def read_dataset(dataset_root: Path) -> list[SubjectSource]:
 
 
 def read_dataset_with_contributions(dataset_root: Path) -> list[SubjectSource]:
-    """read_dataset, with the segmentation dataset PROVIDER_ID gives each scan: the same label file, other labels."""
+    """read_dataset, with the segmentation source PROVIDER_ID gives each scan: the same label file, other labels."""
     subjects = read_dataset(dataset_root)
     for subject in subjects:
         subject.other_sources = {PROVIDER_ID: f"provider-{subject.source_subject_id}"}
         for scan in subject.scans:
             scan.contributions = [
                 Contribution(
-                    dataset_id=PROVIDER_ID,
+                    source_id=PROVIDER_ID,
                     source_scan_id=f"provider-{scan.source_scan_id}",
                     segmentation_paths=scan.segmentation_paths,
                     segmentation_origin="model:TestModel@2.0",
@@ -118,23 +119,21 @@ def export_mesh(scan: ScanSource, output_folder: Path) -> None:
 
 
 class SyntheticConverter(DatasetConverter):
-    def __init__(self, dataset_root: Path, license: str | Licenses = "CC-BY-4.0", contributions: bool = False):
+    """The synthetic source SOURCE_ID; with contributions, its scans also hold the segmentations of PROVIDER_ID."""
+
+    def __init__(
+        self,
+        dataset_root: Path,
+        license: str | Licenses = "CC-BY-4.0",
+        contributions: bool = False,
+        provider_license: str | Licenses = "CC-BY-NC-4.0",
+        source_id: int = SOURCE_ID,
+    ):
         licenses = license if isinstance(license, Licenses) else Licenses.all(license)
-        info = DatasetInfo(name="Synthetic", license=licenses, annotated_labels=["FEMUR_RIGHT", "FEMUR_LEFT"])
-        super().__init__(dataset_root, info)
+        source = SourceInfo(name="Synthetic", license=licenses, annotated_labels=["FEMUR_RIGHT", "FEMUR_LEFT"])
+        provider_licenses = provider_license if isinstance(provider_license, Licenses) else Licenses.all(provider_license)
+        others = {PROVIDER_ID: SourceInfo(name="Synthetic provider", license=provider_licenses)} if contributions else None
+        super().__init__(dataset_root, source_id, source, other_sources=others)
         self.custom_data_handlers.read_dataset = read_dataset_with_contributions if contributions else read_dataset
         self.custom_data_handlers.export_segmentation = export_segmentation
         self.custom_data_handlers.export_mesh = export_mesh
-
-
-def no_subjects(dataset_root: Path) -> list[SubjectSource]:
-    return []  # every subject of the provider lives in the synthetic dataset
-
-
-class ProviderConverter(DatasetConverter):
-    """The dataset PROVIDER_ID: all its data is in the scans of the synthetic dataset, so it writes dataset.json alone."""
-
-    def __init__(self, dataset_root: Path, license: str | Licenses = "CC-BY-NC-4.0"):
-        licenses = license if isinstance(license, Licenses) else Licenses.all(license)
-        super().__init__(dataset_root, DatasetInfo(name="Synthetic provider", license=licenses))
-        self.custom_data_handlers.read_dataset = no_subjects

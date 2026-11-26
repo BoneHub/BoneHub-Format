@@ -1,9 +1,8 @@
-"""The BoneHub registry: the list of source datasets that dataset IDs come from.
+"""The BoneHub registry: the list of source datasets that the datasets of a database are made from.
 
-Every dataset folder is named after the dataset's BoneHub ID in the registry, the JSON file kept in the BoneHub
-Public-Datasets repository: TotalSegmentator CT, BoneHub ID 27, is ds-0027 in every database that holds it. A dataset
-made from another one and published as a dataset of its own (see DatasetInfo.derived_from) gets an entry of its own in
-the registry first.
+The registry is the JSON file kept in the BoneHub Public-Datasets repository. Each dataset of a database lists the
+registry datasets it was made from (its sources) in its dataset.json, by their BoneHub ID, and each data file names its
+source: TotalSegmentator CT is source 27 in every database that holds it, whatever the number of its dataset folder.
 
 The registry is a JSON array with one object per dataset; this package reads the "BoneHub ID" (a positive integer)
 and "Dataset Name" fields of each.

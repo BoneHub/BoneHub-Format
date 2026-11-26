@@ -9,7 +9,7 @@
 </head>
 
 <body>
-    <header>
+    <header class="site-header">
         <div class="container">
             <div class="header-top">
                 <a href="{{LOGO_LINK}}" target="_blank" rel="noopener noreferrer" class="site-logo-link">
@@ -26,228 +26,102 @@
     </header>
 
     <main class="container">
-        <section class="about">
-            <h2>📖 About</h2>
+        <section class="about" id="about">
+            <h2>About</h2>
             {{ABOUT}}
+            <p class="source-note">{{SOURCE_NOTE}}</p>
         </section>
 
-        <section class="getting-started" id="getting-started">
-            <h2>🚀 Getting Started</h2>
-            <p class="section-intro">The database is a Hugging Face dataset repository in the
-                <a href="https://github.com/BoneHub/BoneHub-Format" target="_blank" rel="noopener noreferrer">BoneHub format</a>.
-                Download all of it or only the part you need, read it with the <code>bonehub-format</code> Python package,
-                and cite the source datasets of the scans you use (each card under <a href="#datasets-cards">Source Datasets</a>
-                links to its paper and its entry in the BoneHub registry).</p>
-            <div class="steps-grid">
-                <article class="step-card">
-                    <h3><span class="step-number">1</span>Download</h3>
-                    <p>Everything, or one source dataset (here dataset 27):</p>
-                    <div class="code-block"><button type="button" class="copy-button">Copy</button><pre><code>pip install -U "huggingface_hub[hf_xet]"
-hf download {{HF_REPO_ID}} --repo-type dataset --local-dir data
-hf download {{HF_REPO_ID}} --repo-type dataset --local-dir data \
-    --include "ds-0027/**" --include "index/*"</code></pre></div>
-                </article>
-                <article class="step-card">
-                    <h3><span class="step-number">2</span>Choose scans in the index</h3>
-                    <p>One row per scan, with its subject, labels, licenses and image geometry:</p>
-                    <div class="code-block"><button type="button" class="copy-button">Copy</button><pre><code>import pandas as pd
-from huggingface_hub import snapshot_download
-
-scans = pd.read_parquet("hf://datasets/{{HF_REPO_ID}}/index/scans.parquet")
-chosen = scans[scans["segmentation"].apply(lambda l: "FEMUR_LEFT" in l)
-               &amp; scans["image_published"]]
-snapshot_download("{{HF_REPO_ID}}", repo_type="dataset", local_dir="data",
-                  allow_patterns=[f"{key}/*" for key in chosen["scan"]]
-                  + ["ds-*/dataset.json", "ds-*/*/subject.json"])</code></pre></div>
-                </article>
-                <article class="step-card">
-                    <h3><span class="step-number">3</span>Read it in Python</h3>
-                    <p>Each scan has one segmentation per dataset that provided one:</p>
-                    <div class="code-block"><button type="button" class="copy-button">Copy</button><pre><code>pip install "bonehub-format[io] @ git+https://github.com/BoneHub/BoneHub-Format.git"
-
-from bonehub_format import Database, read_segmentation
-
-for scan in Database("data").scans():
-    print(scan.key, scan.info.modality, scan.image_path)
-    for dataset_id, path in scan.segmentation_paths().items():
-        mask = read_segmentation(path)  # SimpleITK image of LabelMap values</code></pre></div>
-                </article>
-            </div>
-            <p class="section-note">Files under a restricted license are listed in the index but not in the repository
-                (<code>image_published</code> and <code>published</code> columns); the cards below say where to obtain them.</p>
-        </section>
-
-        <section class="overview-section">
-            <h2>📊 Database Overview</h2>
-
-            <div id="overviewMetrics" class="overview-metrics" aria-live="polite">
-                <!-- Overview metric cards are rendered by overview.js -->
-            </div>
-
+        <section class="overview" id="overview">
+            <h2>Database overview</h2>
+            <div class="kpis" id="kpis"></div>
             <div class="overview-grid">
-                <div class="overview-panel">
-                    <h3>Gender Distribution</h3>
-                    <div id="overviewGenderBars" class="overview-bars" aria-live="polite">
-                        <!-- Gender bars are rendered by overview.js -->
+                <article class="panel">
+                    <h3>What the scans hold</h3>
+                    <p class="panel-note">Scans with each kind of data</p>
+                    <div id="chart-kinds" class="bars"></div>
+                </article>
+                <article class="panel">
+                    <h3>Datasets</h3>
+                    <p class="panel-note" id="datasets-note"></p>
+                    <div id="chart-datasets" class="bars"></div>
+                </article>
+                <article class="panel">
+                    <h3>Sex</h3>
+                    <p class="panel-note">Subjects</p>
+                    <div id="chart-sex"></div>
+                    <h3 class="panel-subheading">Imaging modality</h3>
+                    <p class="panel-note">Scans</p>
+                    <div id="chart-modality" class="bars"></div>
+                </article>
+                <article class="panel">
+                    <h3>Age at the scan</h3>
+                    <p class="panel-note" id="age-note"></p>
+                    <div id="chart-age" class="columns"></div>
+                </article>
+                <article class="panel panel-wide">
+                    <h3>Segmented structures</h3>
+                    <p class="panel-note" id="sections-note"></p>
+                    <div id="chart-sections" class="bars"></div>
+                    <details class="structure-list" id="structure-list">
+                        <summary id="structure-summary">Show every structure</summary>
+                        <div class="structure-tools">
+                            <input type="search" id="structure-search" placeholder="Find a structure, e.g. femur"
+                                aria-label="Find a structure">
+                        </div>
+                        <div id="structure-groups"></div>
+                    </details>
+                </article>
+            </div>
+        </section>
+
+        <section class="scans" id="scans">
+            <h2>Scans</h2>
+            <p class="section-intro">Every scan of the database, with a direct download link to each of its files on
+                Hugging Face. Files under a restricted license are not in the repository: their link leads to the source
+                they can be obtained from. Each dataset links to its source datasets in the
+                <a href="{{REGISTRY_PAGE_URL}}" target="_blank" rel="noopener noreferrer">BoneHub registry</a>.</p>
+            <div class="browser">
+                <aside class="filters" id="filters" aria-label="Filters"></aside>
+                <div class="results">
+                    <div class="toolbar">
+                        <input type="search" id="scan-search" placeholder="Search scans, datasets, structures..."
+                            aria-label="Search scans">
+                        <button type="button" id="clear-filters" class="btn-secondary">Clear filters</button>
+                        <button type="button" id="export-csv" class="btn-primary">Export CSV</button>
                     </div>
-                </div>
-
-                <div class="overview-panel">
-                    <h3>Data Asset Coverage</h3>
-                    <div id="overviewAssetBars" class="overview-bars" aria-live="polite">
-                        <!-- Asset bars are rendered by overview.js -->
+                    <p class="result-count" id="result-count" aria-live="polite"></p>
+                    <div class="table-container">
+                        <table id="scan-table">
+                            <thead>
+                                <tr>
+                                    <th data-sort="scan" scope="col">Scan</th>
+                                    <th data-sort="dataset" scope="col">Dataset</th>
+                                    <th data-sort="sex" scope="col">Sex</th>
+                                    <th data-sort="age" scope="col" class="num">Age</th>
+                                    <th data-sort="modality" scope="col">Modality</th>
+                                    <th data-sort="structures" scope="col" class="num">Segmented</th>
+                                    <th scope="col">Download</th>
+                                </tr>
+                            </thead>
+                            <tbody id="scan-rows"></tbody>
+                        </table>
                     </div>
+                    <nav class="pager" id="pager" aria-label="Pages"></nav>
                 </div>
-            </div>
-
-            <div class="overview-grid">
-                <div class="overview-panel">
-                    <h3>Age Profile</h3>
-                    <div id="overviewAgeStats" class="overview-list" aria-live="polite">
-                        <!-- Age stats are rendered by overview.js -->
-                    </div>
-                </div>
-
-                <div class="overview-panel">
-                    <h3>Most Frequent Structures</h3>
-                    <ol id="overviewTopBones" class="overview-top-bones" aria-live="polite">
-                        <!-- Bone frequencies are rendered by overview.js -->
-                    </ol>
-                </div>
-            </div>
-
-            <div class="overview-panel population-panel">
-                <h3>Population Distribution</h3>
-                <div id="overviewPopulation" class="population-chart">
-                    <!-- Age-gender pyramid is rendered by overview.js -->
-                </div>
-            </div>
-        </section>
-
-        <section class="coverage-section" id="coverage">
-            <h2>🦴 Body Coverage</h2>
-            <p class="section-intro">How many scans have each structure segmented or modelled, from any of the datasets
-                that gave the scan data. Hover a structure for its counts; click it to list its scans below.</p>
-            <div class="segmented-control" id="coverageKind" role="group" aria-label="Kind of data counted">
-                <button type="button" data-value="any" aria-pressed="true">Segmentation or mesh</button>
-                <button type="button" data-value="segmentation" aria-pressed="false">Segmentation</button>
-                <button type="button" data-value="mesh" aria-pressed="false">Mesh</button>
-            </div>
-            <div class="coverage-grid">
-                <div class="overview-panel skeleton-panel">
-                    <h3>Bones</h3>
-                    <div id="skeletonMap" class="skeleton-map"></div>
-                    <div id="skeletonLegend" class="viz-legend" aria-label="Color scale"></div>
-                </div>
-                <div class="overview-panel soft-panel">
-                    <h3>Muscles, cartilage, ligaments and body composition</h3>
-                    <div id="softTissueBars" class="soft-tissue"></div>
-                </div>
-            </div>
-        </section>
-
-        <section class="matrix-section" id="matrix">
-            <h2>🧩 Coverage by Dataset</h2>
-            <p class="section-intro">Which dataset gave which structures: the number of scans in which a dataset segmented
-                or modelled a structure group, or the share of the dataset's labelled scans. Where several datasets labelled
-                the same scan, each version is kept and counted.</p>
-            <div class="segmented-control" id="matrixMode" role="group" aria-label="Value shown">
-                <button type="button" data-value="scans" aria-pressed="true">Scans</button>
-                <button type="button" data-value="percent" aria-pressed="false">% of the dataset's scans</button>
-            </div>
-            <div id="coverageMatrix" class="matrix-container"></div>
-            <div id="matrixLegend" class="viz-legend" aria-label="Color scale"></div>
-        </section>
-
-        <section class="cards-section" id="datasets-cards">
-            <h2>📚 Source Datasets</h2>
-            <p class="section-intro">The public datasets this database was converted from, with their licenses per kind of
-                data and how many of their files are published here.</p>
-            <div class="search-controls">
-                <input type="text" id="datasetCardFilter" placeholder="Filter datasets..." aria-label="Filter datasets">
-                <span id="datasetCardCount" class="stats"></span>
-            </div>
-            <div id="datasetCards" class="dataset-cards"></div>
-        </section>
-
-        <section class="search-section" id="scans">
-            <h2>🔍 Browse Scans</h2>
-            <div class="search-controls">
-                <input type="text" id="searchInput" placeholder="Search scans..." aria-label="Search scans">
-                <button id="clearFilters" class="btn-secondary">Clear Filters</button>
-                <button id="toggleColumns" class="btn-secondary">Show/Hide Columns</button>
-                <button id="exportCSV" class="btn-export">📥 Export to CSV</button>
-            </div>
-            <div class="stats">
-                <span id="scanCount">Loading scans...</span>
-            </div>
-            <div id="columnToggles" class="column-toggles" style="display: none;">
-                <h3>Select Columns to Display</h3>
-                <div id="columnCheckboxes" class="checkbox-grid">
-                    <!-- Column checkboxes will be dynamically generated -->
-                </div>
-            </div>
-
-            <div class="table-container">
-                <table id="scansTable">
-                    <thead>
-                        <tr id="tableHeader">
-                            <!-- Headers will be dynamically generated -->
-                        </tr>
-                        <tr id="filterRow">
-                            <!-- Filter inputs will be dynamically generated -->
-                        </tr>
-                    </thead>
-                    <tbody id="tableBody">
-                        <!-- Data rows will be dynamically generated -->
-                    </tbody>
-                </table>
-            </div>
-        </section>
-
-        <section class="datasets-section">
-            <h2>🗂️ Browse Datasets</h2>
-            <div class="search-controls">
-                <input type="text" id="datasetSearchInput" placeholder="Search datasets..."
-                    aria-label="Search datasets">
-                <button id="clearDatasetFilters" class="btn-secondary">Clear Filters</button>
-                <button id="toggleDatasetColumns" class="btn-secondary">Show/Hide Columns</button>
-                <button id="exportDatasetsCSV" class="btn-export">📥 Export to CSV</button>
-            </div>
-            <div class="stats">
-                <span id="datasetCount">Loading datasets...</span>
-            </div>
-            <div id="datasetColumnToggles" class="column-toggles" style="display: none;">
-                <h3>Select Columns to Display</h3>
-                <div id="datasetColumnCheckboxes" class="checkbox-grid">
-                    <!-- Dataset column checkboxes will be dynamically generated -->
-                </div>
-            </div>
-            <div class="table-container compact-table-container">
-                <table id="datasetsTable">
-                    <thead>
-                        <tr id="datasetsTableHeader">
-                            <!-- Dataset headers will be dynamically generated -->
-                        </tr>
-                        <tr id="datasetsFilterRow">
-                            <!-- Dataset filters will be dynamically generated -->
-                        </tr>
-                    </thead>
-                    <tbody id="datasetsTableBody">
-                        <!-- Dataset rows will be dynamically generated -->
-                    </tbody>
-                </table>
             </div>
         </section>
 
         {{CONTACT}}
     </main>
 
+    <footer class="site-footer">
+        <div class="container" id="footer-text"></div>
+    </footer>
+
+    <div class="tooltip" id="tooltip" role="tooltip" hidden></div>
     <script src="data.js"></script>
-    <script src="overview.js"></script>
     <script src="app.js"></script>
-    <script src="coverage.js"></script>
-    <script src="datasets.js"></script>
     {{ANALYTICS}}
 </body>
 

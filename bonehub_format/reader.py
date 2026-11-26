@@ -2,11 +2,12 @@
 
     database = Database("path/to/database")
     for scan in database.scans():
-        print(scan.key, scan.info.modality, scan.image_path, scan.license("image"))
-        for dataset_id, path in scan.segmentation_paths().items():   # one segmentation per provider dataset
-            print(dataset_id, scan.info.labels("segmentation", dataset_id), path)
-        for label, files in scan.model_files("mesh", dataset_id=180).items():
-            mesh_bytes = files[0].read_bytes()
+        print(scan.key, scan.info.modality, scan.image_path)
+        for segmentation in scan.files("segmentation"):     # segmentation-1.nrrd, segmentation-2.nrrd, ...
+            print(segmentation.path, segmentation.source, segmentation.labels, segmentation.license())
+        for mesh in scan.files("mesh"):
+            for label, files in mesh.model_files().items():
+                mesh_bytes = files[0].read_bytes()
 
 Metadata is read when first used and then kept.
 """
@@ -20,7 +21,7 @@ from pathlib import Path
 
 from . import layout
 from ._version import SCHEMA_VERSION, is_compatible_schema_version
-from .metadata import DatasetInfo, ScanInfo, SubjectInfo, file_license
+from .metadata import DatasetInfo, FileInfo, LabeledFileInfo, ScanInfo, SubjectInfo, file_license, sort_labels
 
 
 def _ids(folder: Path, parse, json_name: str) -> list[int]:
@@ -35,7 +36,7 @@ def _ids(folder: Path, parse, json_name: str) -> list[int]:
 
 
 class Database:
-    """A database: a root folder of BoneHub-format datasets (ds-0001, ds-0027, ...), harmonized under one label map."""
+    """A database: a root folder of BoneHub-format datasets (ds-0001, ds-0002, ...), harmonized under one label map."""
 
     def __init__(self, path: Path):
         self.path = Path(path)
@@ -67,8 +68,8 @@ class Database:
 
 
 class Dataset:
-    """A dataset folder (ds-NNNN, named after its BoneHub ID). Its info is checked against the format version this package reads, unless
-    check_version is False."""
+    """A dataset folder (ds-NNNN, numbered within the database). Its info is checked against the format version this
+    package reads, unless check_version is False."""
 
     def __init__(self, database: Database | Path, dataset_id: int, check_version: bool = True):
         self.database = database if isinstance(database, Database) else Database(database)
@@ -135,6 +136,70 @@ class Subject:
         return f"Subject('{self.path}')"
 
 
+class DataFile:
+    """A data file of a scan and its JSON file: the image (number None), or segmentation-N, mesh-N or nurbs-N."""
+
+    def __init__(self, scan: Scan, kind: str, number: int | None = None):
+        self.scan = scan
+        self.kind = kind
+        self.number = number
+        self.path = layout.data_file(scan.path, kind, number)  # what is published: image.nii.gz, segmentation-1.nrrd, mesh-1.zip
+        self.json_path = layout.data_json(scan.path, kind, number)
+
+    @cached_property
+    def info(self) -> FileInfo | LabeledFileInfo:
+        return (FileInfo if self.kind == "image" else LabeledFileInfo).load(self.json_path)
+
+    @property
+    def source(self) -> int:
+        """The BoneHub ID of the source the file came from."""
+        return self.info.source
+
+    @property
+    def labels(self) -> list[str]:
+        """The labels the file holds, in label map order (none for the image)."""
+        return list(getattr(self.info, "labels", {}))
+
+    @property
+    def folder(self) -> Path | None:
+        """The unpacked folder of a model file (mesh-1/), or None."""
+        if self.kind not in layout.MODEL_KINDS:
+            return None
+        folder = layout.model_folder(self.scan.path, self.kind, self.number)
+        return folder if folder.is_dir() else None
+
+    def license(self) -> str | None:
+        """The file's license: its own where its JSON gives one, else its source's subset's, else its source's. None
+        if it is not known."""
+        return file_license(self.kind, self.info, self.scan.dataset.info)
+
+    def model_files(self) -> dict[str, list[Path | zipfile.Path]]:
+        """Label -> files of a model file (mesh or NURBS), from its folder if the scan has it, else from the zip.
+
+        Files from a zip are zipfile.Path objects, read with .read_bytes() or .open(); unpack the zips (see
+        archive.unpack) to have plain files instead.
+        """
+        suffixes = layout.MODEL_KINDS.get(self.kind)
+        if suffixes is None:
+            raise ValueError(f"A {self.kind} file has no model files.")
+        folder = self.folder
+        if folder is not None:
+            entries = [entry for entry in folder.iterdir() if entry.is_file()]
+        elif self.path.is_file():
+            entries = [entry for entry in zipfile.Path(self.path).iterdir() if entry.is_file()]
+        else:
+            return {}
+        files: dict[str, list[Path | zipfile.Path]] = {}
+        for entry in sorted(entries, key=lambda entry: entry.name):
+            stem, suffix = Path(entry.name).stem, Path(entry.name).suffix.lower()
+            if suffix in suffixes:
+                files.setdefault(stem, []).append(entry)
+        return files
+
+    def __repr__(self) -> str:
+        return f"DataFile('{self.path}')"
+
+
 class Scan:
     """A scan folder (scan-NN): one image of a subject and the data derived from it."""
 
@@ -151,7 +216,7 @@ class Scan:
 
     @property
     def key(self) -> str:
-        """The scan's path relative to the database's root folder, e.g. 'ds-0027/sub-000001/scan-01'."""
+        """The scan's path relative to the database's root folder, e.g. 'ds-0001/sub-000001/scan-01'."""
         return layout.scan_key(self.dataset.id, self.subject.id, self.id)
 
     @cached_property
@@ -159,64 +224,34 @@ class Scan:
         return ScanInfo.load(self.path / layout.SCAN_JSON)
 
     @property
-    def provider_ids(self) -> list[int]:
-        """The BoneHub IDs of the datasets that gave the scan data (its home dataset among them if it gave any)."""
-        return self.info.provider_ids
-
-    def license(self, kind: str, dataset_id: int | None = None) -> str | None:
-        """The license of a kind of data ('image', 'segmentation', 'mesh', 'nurbs') of the scan, given by a provider
-        dataset (for the image, the dataset it came from): the scan's own for that provider where scan.json gives one,
-        else that of the provider's subset, else the provider dataset's. None if it is not known, e.g. when the
-        provider's dataset.json is not in the database."""
-        if kind == "image":
-            dataset_id = self.info.image_provider
-            if dataset_id is None:
-                return None
-        elif dataset_id is None:
-            raise ValueError(f"Say which provider dataset's {kind} the license is wanted for.")
-        database = self.dataset.database
-        provider_dataset = database.dataset(dataset_id).info if database.has_dataset(dataset_id) else None
-        return file_license(self.info, kind, dataset_id, provider_dataset)
-
-    @property
     def image_path(self) -> Path | None:
         path = self.path / layout.IMAGE_FILE
         return path if path.is_file() else None
 
-    def segmentation_path(self, dataset_id: int) -> Path | None:
-        """The segmentation a provider dataset gave the scan, or None."""
-        path = layout.segmentation_file(self.path, dataset_id)
-        return path if path.is_file() else None
+    @property
+    def image(self) -> DataFile | None:
+        """The image and its JSON file, or None for a scan without an image."""
+        return DataFile(self, "image") if layout.data_json(self.path, "image").is_file() else None
 
-    def segmentation_paths(self) -> dict[int, Path]:
-        """Provider dataset ID -> its segmentation, for every provider that gave one."""
-        paths = {dataset_id: self.segmentation_path(dataset_id) for dataset_id in self.provider_ids}
-        return {dataset_id: path for dataset_id, path in paths.items() if path is not None}
+    def files(self, kind: str | None = None) -> list[DataFile]:
+        """The scan's data files of a kind ('image', 'segmentation', 'mesh', 'nurbs'), or of every kind, in order:
+        those that have a JSON file."""
+        kinds = layout.DATA_KINDS if kind is None else [layout._check_kind(kind)]
+        found = []
+        for entry in self.path.iterdir():
+            parsed = layout.parse_scan_entry(entry.name)
+            if parsed is not None and parsed[2] == "json" and parsed[0] in kinds:
+                found.append((layout.DATA_KINDS.index(parsed[0]), parsed[1] or 0, parsed[0]))
+        return [DataFile(self, kind, number or None) for _, number, kind in sorted(found)]
 
-    def model_files(self, kind: str, dataset_id: int) -> dict[str, list[Path | zipfile.Path]]:
-        """Label -> files of a model kind ('mesh' or 'nurbs') a provider dataset gave the scan, from the folder if the
-        scan has it, else from the zip.
+    def labels(self, kind: str) -> list[str]:
+        """The labels that have data of a kind ('segmentation', 'mesh', 'nurbs') in any file, in label map order."""
+        return sort_labels({label for data in self.files(kind) for label in data.labels})
 
-        Files from a zip are zipfile.Path objects, read with .read_bytes() or .open(); unpack the zips (see
-        archive.unpack) to have plain files instead.
-        """
-        suffixes = layout.MODEL_KINDS.get(kind)
-        if suffixes is None:
-            raise ValueError(f"Unknown kind '{kind}'; the kinds are {list(layout.MODEL_KINDS)}.")
-        folder = layout.model_folder(self.path, kind, dataset_id)
-        zip_path = layout.model_zip(self.path, kind, dataset_id)
-        if folder.is_dir():
-            entries = [entry for entry in folder.iterdir() if entry.is_file()]
-        elif zip_path.is_file():
-            entries = [entry for entry in zipfile.Path(zip_path).iterdir() if entry.is_file()]
-        else:
-            return {}
-        files: dict[str, list[Path | zipfile.Path]] = {}
-        for entry in sorted(entries, key=lambda entry: entry.name):
-            stem, suffix = Path(entry.name).stem, Path(entry.name).suffix.lower()
-            if suffix in suffixes:
-                files.setdefault(stem, []).append(entry)
-        return files
+    @property
+    def sources(self) -> list[int]:
+        """The BoneHub IDs of the sources the scan's files came from."""
+        return sorted({data.source for data in self.files()})
 
     def __repr__(self) -> str:
         return f"Scan('{self.path}')"
