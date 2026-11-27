@@ -1098,3 +1098,8 @@ a.dl:hover {
     }
 
 }
+
+.card-summary {
+    font-size: 0.9rem;
+    margin-bottom: 4px;
+}

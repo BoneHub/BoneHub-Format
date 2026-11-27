@@ -558,11 +558,16 @@ function subjectCell(scan) {
     return `<div>${esc(facts.join(" · "))}</div>${origin.length ? `<div class="muted">${esc(origin.join(" · "))}</div>` : ""}`;
 }
 
+/** The number of structures of a scan, and per type of data. */
+function structureCounts(scan) {
+    const kinds = LABELED_KINDS.filter((kind) => labelsOf(scan, kind).length);
+    return { total: scanLabels(scan).length, perKind: kinds.map((kind) => `${KIND_NAMES[kind].toLowerCase()} ${labelsOf(scan, kind).length}`).join(" · ") };
+}
+
 function dataCell(scan) {
     const all = scanLabels(scan);
-    const kinds = LABELED_KINDS.filter((kind) => labelsOf(scan, kind).length);
     if (!all.length) return `<span class="muted">No structures</span>`;
-    const perKind = kinds.map((kind) => `${KIND_NAMES[kind].toLowerCase()} ${labelsOf(scan, kind).length}`).join(" · ");
+    const { perKind } = structureCounts(scan);
     let matched = "";
     if (matchedLabels.size) {
         const hits = all.filter((label) => matchedLabels.has(label));
@@ -708,6 +713,7 @@ function cardHtml(scan, details) {
         </section>
         <section class="card-section">
             <h3>Data</h3>
+            ${(({ total, perKind }) => (total ? `<p class="card-summary">${fmt(total)} structures <span class="muted">(${esc(perKind)})</span></p>` : `<p class="muted">No structures</p>`))(structureCounts(scan))}
             ${truncated.size ? `<p class="muted"><sup class="border-mark">*</sup> touches the image border, so probably cut off by the field of view</p>` : ""}
             ${scan.files.map((file) => fileSection(scan, file, fileInfo(file), details, truncated)).join("")}
         </section>
