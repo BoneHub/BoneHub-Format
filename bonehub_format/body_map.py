@@ -5,7 +5,7 @@ across regions, cartilage (S 7), ligaments (S 8) and muscles (S 9). Region 9 hol
 composition classes.
 
     section_of(LabelMap.FEMUR_LEFT)    'Leg'
-    structures_data()                  the sections in display order and the section of every label
+    structures_data()                  the sections in display order, the section and the value of every label
 """
 
 from __future__ import annotations
@@ -42,8 +42,10 @@ def section_of(label: LabelMap) -> str:
 
 
 def structures_data() -> dict:
-    """The sections in display order, and the index of the section of every label."""
+    """The sections in display order, the index of the section of every label, and every label's value (which says
+    its structure, part, tissue and side, see labelmap.py)."""
     return {
         "sections": list(SECTIONS),
         "labels": {label.name: SECTIONS.index(section_of(label)) for label in LabelMap if label.value},
+        "values": {label.name: label.value for label in LabelMap if label.value},
     }

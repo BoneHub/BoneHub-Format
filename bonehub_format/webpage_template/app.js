@@ -88,6 +88,32 @@ function labelsMatching(query) {
     return LABELS.map((_, i) => i).filter((i) => words.every((word) => SEARCH_TEXT[i].includes(word)));
 }
 
+/** The parts of a label value (labelmap.py, R S M M part tissue side): structure RSMM, part, tissue, side. */
+function codes(value) {
+    return { structure: Math.floor(value / 1e5), part: Math.floor(value / 1000) % 100, tissue: Math.floor(value / 10) % 100, side: value % 10 };
+}
+
+/** The labels a label covers in the label map: itself and every label under it. A structure without a side covers
+ * both sides; a group (e.g. Ribs) covers its members (Rib 1 .. Rib 12), a region (e.g. Lower extremity) its bones;
+ * a part (Femur, proximal) or tissue (cortical) covers only that part or tissue. */
+function labelsCovered(index) {
+    const chosen = site.labels[index].value;
+    if (chosen == null) return [index];
+    const c = codes(chosen);
+    const region = Math.floor(c.structure / 1000), family = Math.floor(c.structure / 100) % 10, member = c.structure % 100;
+    return site.labels
+        .map((label, i) => [i, label.value == null ? null : codes(label.value)])
+        .filter(([, o]) => {
+            if (o === null) return false;
+            let sameStructure;
+            if (member === 0 && family === 0) sameStructure = Math.floor(o.structure / 1000) === region && Math.floor(o.structure / 100) % 10 <= 6;
+            else if (member === 0) sameStructure = Math.floor(o.structure / 100) === Math.floor(c.structure / 100);
+            else sameStructure = o.structure === c.structure;
+            return sameStructure && (!c.side || o.side === c.side) && (!c.part || o.part === c.part) && (!c.tissue || o.tissue === c.tissue);
+        })
+        .map(([i]) => i);
+}
+
 function subjectFacts(scan) {
     return [
         SEX_NAMES[scan.sex],
@@ -382,7 +408,7 @@ function renderFilters() {
             <option value="any">any data</option><option value="segmentation">a segmentation</option><option value="mesh">a mesh</option><option value="nurbs">a NURBS surface</option>
         </select></label>
         <div class="chips" id="structure-chips"></div>
-        <p class="filter-hint">Press Enter to add. A scan must have every structure added; a word adds all structures it names.</p></fieldset>`);
+        <p class="filter-hint">Press Enter to add. A structure without a side covers both sides and all of its parts; a word covers every structure it names. A scan must have every structure added.</p></fieldset>`);
     const filters = document.getElementById("filters");
     filters.innerHTML = groups.join("");
 
@@ -409,7 +435,7 @@ function renderFilters() {
         const text = structureInput.value.trim();
         if (!text) return;
         const exact = PRETTY.findIndex((name) => name.toLowerCase() === text.toLowerCase());
-        const labels = exact >= 0 ? [exact] : labelsMatching(text);
+        const labels = exact >= 0 ? labelsCovered(exact) : labelsMatching(text);
         structureInput.value = "";
         if (!labels.length) {
             structureInput.placeholder = `No structure matches '${text}'`;
