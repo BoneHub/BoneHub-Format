@@ -37,13 +37,13 @@
             <div class="kpis" id="kpis"></div>
             <div class="overview-grid">
                 <article class="panel">
-                    <h3>What the scans hold</h3>
-                    <p class="panel-note">Scans with each kind of data</p>
+                    <h3>Data types</h3>
+                    <p class="panel-note">Scans with each type of data</p>
                     <div id="chart-kinds" class="bars"></div>
                 </article>
                 <article class="panel">
                     <h3>Datasets</h3>
-                    <p class="panel-note" id="datasets-note"></p>
+                    <p class="panel-note">Scans per dataset</p>
                     <div id="chart-datasets" class="bars"></div>
                 </article>
                 <article class="panel">
@@ -55,21 +55,21 @@
                     <div id="chart-modality" class="bars"></div>
                 </article>
                 <article class="panel">
-                    <h3>Age at the scan</h3>
-                    <p class="panel-note" id="age-note"></p>
+                    <h3>Age at scan</h3>
+                    <p class="panel-note" id="age-note">Scans per age group</p>
                     <div id="chart-age" class="columns"></div>
                 </article>
                 <article class="panel panel-wide">
                     <h3>Segmented structures</h3>
-                    <p class="panel-note" id="sections-note"></p>
-                    <div id="chart-sections" class="bars"></div>
+                    <p class="panel-note">Scans with a segmentation of each body region</p>
+                    <div id="chart-sections" class="bars bars-two-columns"></div>
                     <details class="structure-list" id="structure-list">
-                        <summary id="structure-summary">Show every structure</summary>
+                        <summary id="structure-summary">All structures</summary>
                         <div class="structure-tools">
-                            <input type="search" id="structure-search" placeholder="Find a structure, e.g. femur"
+                            <input type="search" id="structure-search" placeholder="Find a structure"
                                 aria-label="Find a structure">
                         </div>
-                        <div id="structure-groups"></div>
+                        <div id="structure-groups" class="structure-groups"></div>
                     </details>
                 </article>
             </div>
@@ -77,16 +77,19 @@
 
         <section class="scans" id="scans">
             <h2>Scans</h2>
-            <p class="section-intro">Every scan of the database, with a direct download link to each of its files on
-                Hugging Face. Files under a restricted license are not in the repository: their link leads to the source
-                they can be obtained from. Each dataset links to its source datasets in the
-                <a href="{{REGISTRY_PAGE_URL}}" target="_blank" rel="noopener noreferrer">BoneHub registry</a>.</p>
+            <p class="section-intro">Select a scan to see all of its information. Files under a restricted license
+                are not in the repository; their link leads to their source.</p>
             <div class="browser">
                 <aside class="filters" id="filters" aria-label="Filters"></aside>
                 <div class="results">
                     <div class="toolbar">
-                        <input type="search" id="scan-search" placeholder="Search scans, datasets, structures..."
-                            aria-label="Search scans">
+                        <input type="search" id="scan-search" placeholder="Search scans and structures"
+                            aria-label="Search scans and structures">
+                        <label class="sort-control">Sort by
+                            <select id="sort-key" aria-label="Sort by"></select>
+                            <button type="button" id="sort-direction" class="btn-icon" aria-label="Ascending"
+                                title="Ascending">↑</button>
+                        </label>
                         <button type="button" id="clear-filters" class="btn-secondary">Clear filters</button>
                         <button type="button" id="export-csv" class="btn-primary">Export CSV</button>
                     </div>
@@ -95,12 +98,10 @@
                         <table id="scan-table">
                             <thead>
                                 <tr>
-                                    <th data-sort="scan" scope="col">Scan</th>
-                                    <th data-sort="dataset" scope="col">Dataset</th>
-                                    <th data-sort="sex" scope="col">Sex</th>
-                                    <th data-sort="age" scope="col" class="num">Age</th>
-                                    <th data-sort="modality" scope="col">Modality</th>
-                                    <th data-sort="structures" scope="col">Structures</th>
+                                    <th scope="col">Scan</th>
+                                    <th scope="col">Subject</th>
+                                    <th scope="col">Imaging</th>
+                                    <th scope="col">Data</th>
                                     <th scope="col">Download</th>
                                 </tr>
                             </thead>
@@ -118,6 +119,21 @@
     <footer class="site-footer">
         <div class="container" id="footer-text"></div>
     </footer>
+
+    <aside class="card-panel" id="card" role="dialog" aria-modal="false" aria-labelledby="card-title" hidden>
+        <header class="card-header">
+            <div>
+                <p class="card-eyebrow" id="card-dataset"></p>
+                <h2 id="card-title" class="card-title"></h2>
+            </div>
+            <div class="card-actions">
+                <button type="button" class="btn-icon" id="card-previous" aria-label="Previous scan" title="Previous scan (↑)">↑</button>
+                <button type="button" class="btn-icon" id="card-next" aria-label="Next scan" title="Next scan (↓)">↓</button>
+                <button type="button" class="btn-icon" id="card-close" aria-label="Close" title="Close (Esc)">✕</button>
+            </div>
+        </header>
+        <div class="card-body" id="card-body"></div>
+    </aside>
 
     <div class="tooltip" id="tooltip" role="tooltip" hidden></div>
     <script src="data.js"></script>

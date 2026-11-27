@@ -200,10 +200,6 @@ main > section > h2 {
     line-height: 1.2;
 }
 
-.kpi-detail {
-    font-size: 0.8rem;
-    color: var(--text-muted);
-}
 
 /* Overview: panels */
 .overview-grid {
@@ -479,21 +475,40 @@ main > section > h2 {
 }
 
 .filter-group {
+    border: 0;
     border-bottom: 1px solid var(--border);
     padding: 12px 0;
+    margin: 0;
+    min-width: 0;
 }
 
 .filter-group:first-child {
     padding-top: 0;
 }
 
-.filter-group h3 {
+.filter-group legend {
+    float: left;
+    width: 100%;
     font-size: 0.78rem;
     font-weight: 700;
     text-transform: uppercase;
     letter-spacing: 0.04em;
     color: var(--text-secondary);
     margin-bottom: 8px;
+}
+
+.filter-group legend + * {
+    clear: both;
+}
+
+.filter-group .unit {
+    text-transform: none;
+    font-weight: 400;
+    letter-spacing: 0;
+}
+
+.option-name {
+    min-width: 0;
 }
 
 .filter-option {
@@ -612,6 +627,45 @@ a:focus-visible {
     min-width: 220px;
 }
 
+.sort-control {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+}
+
+.sort-control select {
+    font: inherit;
+    font-size: 0.85rem;
+    padding: 6px 8px;
+    border: 1px solid var(--border);
+    border-radius: 7px;
+    background: var(--surface);
+    color: var(--text-primary);
+}
+
+.btn-icon {
+    font: inherit;
+    font-size: 0.9rem;
+    width: 32px;
+    height: 32px;
+    border: 1px solid var(--border);
+    border-radius: 7px;
+    background: var(--surface);
+    color: var(--text-primary);
+    cursor: pointer;
+}
+
+.btn-icon:hover:not(:disabled) {
+    background: var(--surface-2);
+}
+
+.btn-icon:disabled {
+    opacity: 0.4;
+    cursor: default;
+}
+
 .btn-primary,
 .btn-secondary {
     font: inherit;
@@ -709,30 +763,33 @@ tbody tr:hover {
     font-variant-numeric: tabular-nums;
 }
 
-.scan-key {
+.scan-name {
+    display: flex;
+    flex-direction: column;
     font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-    font-size: 0.82rem;
+    font-size: 0.8rem;
+    line-height: 1.35;
+    color: var(--link);
     white-space: nowrap;
 }
 
-.dataset-name {
-    font-weight: 600;
-}
-
-.dataset-sources {
-    font-size: 0.78rem;
+.muted {
     color: var(--text-muted);
-    white-space: nowrap;
 }
 
-.structures {
-    cursor: default;
-    border-bottom: 1px dotted var(--text-muted);
-    font-variant-numeric: tabular-nums;
+#scan-rows tr[data-scan] {
+    cursor: pointer;
 }
 
-.structures-cell {
-    min-width: 110px;
+#scan-rows tr[data-scan]:focus-visible {
+    outline: 2px solid var(--series-bar);
+    outline-offset: -2px;
+}
+
+#scan-rows tr.selected,
+#scan-rows tr.selected:hover {
+    background: #eef4fc;
+    box-shadow: inset 3px 0 0 var(--series-bar);
 }
 
 .matched {
@@ -742,9 +799,6 @@ tbody tr:hover {
     color: var(--text-primary);
 }
 
-.matched .kinds {
-    color: var(--text-muted);
-}
 
 .downloads {
     display: flex;
@@ -812,6 +866,191 @@ a.dl:hover {
     text-align: center;
     color: var(--text-muted);
 }
+
+/* Data card: a panel on the right */
+.card-panel {
+    position: fixed;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 20;
+    width: min(560px, 100vw);
+    display: flex;
+    flex-direction: column;
+    background: var(--surface);
+    border-left: 1px solid var(--border);
+    box-shadow: -8px 0 24px rgba(27, 36, 48, 0.12);
+}
+
+.card-panel[hidden] {
+    display: none;
+}
+
+.card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 12px;
+    padding: 18px 22px 14px;
+    border-bottom: 1px solid var(--border);
+}
+
+.card-eyebrow {
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+}
+
+.card-title {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 1rem;
+    font-weight: 600;
+    word-break: break-all;
+}
+
+.card-actions {
+    display: flex;
+    gap: 6px;
+    flex-shrink: 0;
+}
+
+.card-body {
+    flex: 1;
+    overflow-y: auto;
+    padding: 4px 22px 28px;
+}
+
+.card-section {
+    padding: 16px 0;
+    border-bottom: 1px solid var(--grid);
+}
+
+.card-section:last-child {
+    border-bottom: 0;
+}
+
+.card-section h3 {
+    font-size: 0.78rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--text-secondary);
+    margin-bottom: 10px;
+}
+
+.card-link {
+    margin-top: 10px;
+    font-size: 0.88rem;
+}
+
+.facts {
+    display: grid;
+    grid-template-columns: 140px 1fr;
+    gap: 6px 14px;
+    font-size: 0.88rem;
+}
+
+.facts dt {
+    color: var(--text-secondary);
+}
+
+.facts dd {
+    margin: 0;
+    min-width: 0;
+    overflow-wrap: anywhere;
+}
+
+.file {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px 14px;
+    margin-top: 10px;
+}
+
+.file-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 8px;
+}
+
+.file h4 {
+    font-size: 0.92rem;
+    font-weight: 650;
+}
+
+.file h4 code {
+    font-weight: 400;
+    margin-left: 6px;
+}
+
+.file h5 {
+    font-size: 0.82rem;
+    font-weight: 650;
+    margin: 10px 0 4px;
+}
+
+.label-list {
+    font-size: 0.82rem;
+    line-height: 1.5;
+}
+
+.label-more summary {
+    cursor: pointer;
+    font-size: 0.82rem;
+    line-height: 1.5;
+    list-style: none;
+}
+
+.label-more summary::-webkit-details-marker {
+    display: none;
+}
+
+.label-more .more {
+    color: var(--link);
+    font-weight: 600;
+    white-space: nowrap;
+}
+
+.label-more[open] summary {
+    display: none;
+}
+
+.border-mark {
+    color: #b54708;
+    font-weight: 700;
+}
+
+.badge {
+    display: inline-block;
+    padding: 0 6px;
+    border-radius: 999px;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+}
+
+.sources-heading {
+    font-size: 0.85rem;
+    font-weight: 650;
+    margin: 14px 0 4px;
+}
+
+.source {
+    padding: 8px 0;
+    font-size: 0.85rem;
+    border-top: 1px solid var(--grid);
+}
+
+.source-name {
+    font-weight: 600;
+}
+
+.error {
+    color: #b42318;
+}
+
 
 /* Contact and footer */
 .contact p + p {

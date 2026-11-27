@@ -96,8 +96,7 @@ def build_webpage(
     about = about_html or (
         "<p>This database holds medical images, segmentations of bones, muscles and other tissues, and the 3D shapes "
         "derived from them, converted from public datasets into the <a href=\"https://github.com/BoneHub/BoneHub-Format\" "
-        "target=\"_blank\" rel=\"noopener noreferrer\">BoneHub format</a>. Each person is stored once. It is intended "
-        "for biomedical research.</p>"
+        "target=\"_blank\" rel=\"noopener noreferrer\">BoneHub format</a>. It is intended for biomedical research.</p>"
     )
     if hf_url:
         source_note = (

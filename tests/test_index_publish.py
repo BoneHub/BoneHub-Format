@@ -171,24 +171,38 @@ class TestDatabase(unittest.TestCase):
         self.assertIn("the main source of this page", page)
         self.assertNotIn("Getting started", page)
         data = (folder / "data.js").read_text(encoding="utf-8")
+        self.assertGreater(data.count("\n"), 10)  # readable: one record per line, not one long line
         site = json.loads(data.split("const site = ", 1)[1].rsplit(";", 1)[0])
         self.assertEqual(site["repo"], "Org/Test-Dataset")
         self.assertEqual([d["folder"] for d in site["datasets"]], ["ds-0001", "ds-0002", "ds-0003", "ds-0004"])
-        self.assertEqual(site["datasets"][1]["sources"], [[5, "Synthetic", None], [7, "Synthetic provider", None]])
+        self.assertEqual(site["datasets"][1]["sources"], [[5, "Synthetic"], [7, "Synthetic provider"]])
         self.assertEqual(len(site["scans"]), 5)
-        key, dataset, sex, age, modality, race, ethnicity, labels, meshes, nurbs, files = site["scans"][0]
-        self.assertEqual((key, dataset, sex, age, modality, race, ethnicity), ("ds-0001/sub-000001/scan-01", 0, "F", 60, "CT", None, None))
-        self.assertEqual([site["labels"][i] for i in labels], ["FEMUR_LEFT", "FEMUR_RIGHT"])
-        self.assertEqual([site["labels"][i] for i in meshes], ["FEMUR_LEFT"])  # labels of every kind, for the filters
-        self.assertEqual(nurbs, [])
-        self.assertEqual(site["sections"][site["labelSection"][labels[0]]], "Leg")
-        self.assertEqual([(f[0], f[1], f[3], f[4], f[5]) for f in files],
+        first = site["scans"][0]
+        self.assertEqual({key: first[key] for key in ("scan", "dataset", "sex", "age", "modality")},
+                         {"scan": "ds-0001/sub-000001/scan-01", "dataset": 0, "sex": "F", "age": 60, "modality": "CT"})
+        self.assertNotIn("race", first)  # fields without a value are left out
+        labels = [site["labels"][i] for i in first["segmentation"]]
+        self.assertEqual([label["name"] for label in labels], ["FEMUR_LEFT", "FEMUR_RIGHT"])
+        self.assertEqual(site["sections"][labels[0]["section"]], "Leg")
+        self.assertEqual([site["labels"][i]["name"] for i in first["mesh"]], ["FEMUR_LEFT"])  # every kind, for the filters
+        self.assertEqual([(f["kind"], f.get("number"), f["published"], f["source"], f["license"]) for f in first["files"]],
                          [("image", None, True, 3, "CC-BY-4.0"), ("segmentation", 1, True, 3, "CC-BY-4.0"), ("mesh", 1, True, 3, "CC-BY-4.0")])
-        self.assertTrue(all(f[2] > 0 for f in files))
-        restricted = [scan for scan in site["scans"] if scan[0].startswith("ds-0003")][0]
-        self.assertEqual({f[3] for f in restricted[-1]}, {False})
-        self.assertEqual(site["sources"]["7"]["licenses"]["segmentation"], "CC-BY-NC-4.0")
-        self.assertNotIn("{{", (folder / "update_data.py").read_text(encoding="utf-8"))
+        restricted = [scan for scan in site["scans"] if scan["scan"].startswith("ds-0003")][0]
+        self.assertEqual({f["published"] for f in restricted["files"]}, {False})
+        self.assertEqual(site["sources"]["7"]["name"], "Synthetic provider")
+
+        details_js = (folder / "details" / "ds-0002.js").read_text(encoding="utf-8")
+        details = json.loads(details_js.split("] = ", 1)[1].rsplit(";", 1)[0])
+        self.assertEqual([s["id"] for s in details["sources"]], [5, 7])
+        self.assertEqual(details["sources"][1]["licenses"]["segmentation"], "CC-BY-NC-4.0")
+        card = details["scans"]["ds-0002/sub-000001/scan-01"]
+        self.assertEqual(card["subjectSources"], {"5": "q1", "7": "provider-q1"})
+        self.assertEqual(card["imageSize"], [16, 16, 12])
+        second = [f for f in card["files"] if f["kind"] == "segmentation" and f["number"] == 2][0]
+        self.assertEqual(second["sourceScanId"], "provider-q1/ct")
+        self.assertEqual({origin: [site["labels"][i]["name"] for i in labels] for origin, labels in second["origins"].items()},
+                         {"model:TestModel@2.0": ["GLUTEUS_MAXIMUS_RIGHT", "FEMUR_LEFT"]})
+        self.assertNotRegex((folder / "update_data.py").read_text(encoding="utf-8"), r"\{\{[A-Z_]+\}\}")  # placeholders filled in
         self.assertTrue((folder / ".nojekyll").exists() and (folder / "app.js").exists())
 
 
