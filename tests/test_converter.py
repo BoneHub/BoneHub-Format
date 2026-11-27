@@ -224,8 +224,13 @@ class TestConverterRuns(unittest.TestCase):
         self.assertEqual(pack(self.root), [])  # up to date
         (mesh_folder / "FEMUR_LEFT.stl").write_bytes(b"solid changed\nendsolid changed\n")
         self.assertTrue(any("run pack" in p for p in validate(self.root)))
+        self.assertFalse(any("run pack" in p for p in validate(self.root, zips_checked=True)))  # trusts a pack just run
         self.assertEqual(pack(self.root), [mesh_zip])
         self.assertEqual(validate(self.root), [])
+
+        mesh_zip.rename(mesh_zip.with_suffix(".moved"))  # a missing zip is a problem even after a pack
+        self.assertTrue(any("has no mesh-01.zip" in p for p in validate(self.root, publishing=True, zips_checked=True)))
+        mesh_zip.with_suffix(".moved").rename(mesh_zip)
 
         shutil.rmtree(mesh_folder)  # as downloaded: only the zip
         self.assertEqual(list(Database(self.root).dataset(1).subject(1).scan(1).files("mesh")[0].model_files()), ["FEMUR_LEFT"])

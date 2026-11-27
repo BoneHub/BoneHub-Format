@@ -11,6 +11,10 @@
 Whether a file is published is decided per file, from its license (see reader.DataFile.license): a scan can publish
 its segmentation and keep its restricted image back. The JSON files are always published.
 
+Everything here is read from the index (index/*.parquet, see index.py) and the datasets' dataset.json, not from the
+scan folders, so build_index must have run after the last change: prepare does both in turn, and upload checks that
+the index is up to date before it starts.
+
 write_hub_files() writes them all from the metadata, after build_index() has written the index the card points to.
 """
 
@@ -64,19 +68,24 @@ def _license_link(value: str | None) -> str:
     return f"[{value}]({url})" if url else license_name(value)
 
 
-def scan_files(scan) -> list[tuple[str, str, int, str | None]]:
-    """(file name, kind, source, license) of every data file of a scan that would be published: the image, the
-    segmentations and the model zips."""
-    return [(data.path.name, data.kind, data.source, data.license()) for data in scan.files()]
+def _index_rows(root: Path, name: str, columns: list[str]) -> list[dict]:
+    """The rows of an index table (see index.py), with these columns."""
+    from .index import _arrow
+
+    _, pq = _arrow()
+    path = Path(root) / layout.INDEX_DIR / INDEX_FILES[name]
+    if not path.is_file():
+        raise FileNotFoundError(f"'{path}' is missing; run build_index first.")
+    return pq.read_table(path, columns=columns).to_pylist()
 
 
-def _withheld(root: Database) -> list[str]:
+def _withheld(root: Path) -> list[str]:
     """The data files that are not published (restricted or unknown license), as paths relative to the root; a file
     name withheld in every scan of a dataset is given as one pattern, e.g. ds-0003/*/*/image.nii.gz."""
     by_name: dict[tuple[str, str], list[tuple[str, bool]]] = {}  # (dataset folder, file name) -> (scan key, published)
-    for scan in root.scans():
-        for name, _, _, license in scan_files(scan):
-            by_name.setdefault((scan.dataset.path.name, name), []).append((scan.key, is_publishable(license)))
+    for row in _index_rows(root, "files", ["scan", "path", "published"]):
+        dataset_folder, name = row["path"].split("/", 1)[0], row["path"].rsplit("/", 1)[1]
+        by_name.setdefault((dataset_folder, name), []).append((row["scan"], row["published"]))
     withheld = []
     for (dataset_folder, name), entries in sorted(by_name.items()):
         if not any(published for _, published in entries):
@@ -90,9 +99,9 @@ def excluded_from_upload(root: Path) -> list[tuple[str, str]]:
     """What stays out of the upload, as (.gitignore pattern, upload pattern) pairs.
 
     Upload patterns are matched with fnmatch against paths relative to the database's root folder, as huggingface_hub matches its
-    ignore_patterns: '*' also matches across folders.
+    ignore_patterns: '*' also matches across folders. The files withheld are read from the index.
     """
-    reader = root if isinstance(root, Database) else Database(root)
+    root = root.path if isinstance(root, Database) else Path(root)
     excluded = [
         ("upload.md", "upload.md"),
         (f"{layout.LOGS_DIR}/", f"{layout.LOGS_DIR}/*"),
@@ -102,11 +111,11 @@ def excluded_from_upload(root: Path) -> list[tuple[str, str]]:
         ("*.tmp", "*.tmp"),
         *((f"**/{kind}-*/", f"*/{kind}-*/*") for kind in layout.MODEL_KINDS),
     ]
-    excluded += [(f"/{path}", path) for path in _withheld(reader)]
+    excluded += [(f"/{path}", path) for path in _withheld(root)]
     return excluded
 
 
-def _gitignore(root: Database) -> str:
+def _gitignore(root: Path) -> str:
     lines = [
         "# What stays out of the Hugging Face upload. Written by bonehub_format.publish, from the licenses in the",
         "# metadata; write it again with write_hub_files rather than editing it. upload() passes the same exclusions",
@@ -142,26 +151,32 @@ def upload(root: Path, repo_id: str, commit_message: str | None = None) -> None:
 
 
 class _Summary:
-    def __init__(self, root: Database):
-        self.datasets = root.datasets()
-        self.scans = list(root.scans())
-        self.by_dataset = Counter(scan.dataset.id for scan in self.scans)
-        self.subjects_by_dataset = Counter(dataset_id for dataset_id, _ in {(s.dataset.id, s.subject.id) for s in self.scans})
-        self.modalities = Counter(scan.info.modality or "unknown" for scan in self.scans)
-        self.kind_counts = {kind: sum(len(scan.labels(kind)) for scan in self.scans) for kind in LABEL_KINDS}
+    """What the card, LICENSE.md and upload.md show, from the index and the datasets' dataset.json."""
+
+    def __init__(self, root: Path):
+        self.datasets = Database(root).datasets()
+        info = {dataset.id: dataset.info for dataset in self.datasets}
+        scans = _index_rows(root, "scans", ["dataset_id", "subject_id", "modality", *LABEL_KINDS])
+        self.scan_count = len(scans)
+        self.by_dataset = Counter(row["dataset_id"] for row in scans)
+        self.subjects_by_dataset = Counter(dataset_id for dataset_id, _ in {(row["dataset_id"], row["subject_id"]) for row in scans})
+        self.modalities = Counter(row["modality"] or "unknown" for row in scans)
+        self.kind_counts = {kind: sum(len(row[kind] or []) for row in scans) for kind in LABEL_KINDS}
         # (dataset ID, source, kind) -> files, files withheld
         self.files = Counter()
         self.withheld = Counter()
         self.file_licenses = Counter()  # (dataset ID, source, kind, license) of files under a subset's or their own
-        for scan in self.scans:
-            for data in scan.files():
-                key = (scan.dataset.id, data.source, data.kind)
-                license = data.license()
-                self.files[key] += 1
-                if not is_publishable(license):
-                    self.withheld[key] += 1
-                if data.info.license is not None or data.info.subset is not None:
-                    self.file_licenses[(*key, license)] += 1
+        self.published_bytes = 0
+        for row in _index_rows(root, "files", ["dataset_id", "kind", "source", "subset", "license", "published", "size"]):
+            key = (row["dataset_id"], row["source"], row["kind"])
+            self.files[key] += 1
+            if row["published"]:
+                self.published_bytes += row["size"] or 0
+            else:
+                self.withheld[key] += 1
+            source = info[row["dataset_id"]].source(row["source"])
+            if row["subset"] is not None or source is None or row["license"] != source.license_of(row["kind"]):
+                self.file_licenses[(*key, row["license"])] += 1
         self.restricted = [
             (dataset, source_id, source)
             for dataset in self.datasets
@@ -189,7 +204,7 @@ def _sources_text(info) -> str:
     return "<br>".join(f"[{source_id}]({registry_entry_url(source_id)}) {source.name}" for source_id, source in info.sources.items())
 
 
-def _card(root: Database, summary: _Summary, repo_id: str, title: str, description: str | None, homepage: str | None) -> str:
+def _card(summary: _Summary, repo_id: str, title: str, description: str | None, homepage: str | None) -> str:
     tags = ["medical", "bone", "3d", "bonehub-format"]
     tags += sorted({_MODALITY_TAGS.get(m, m.lower()) for m in summary.modalities if m != "unknown"})
     tags += [kind for kind in layout.MODEL_KINDS if summary.kind_counts[kind]]
@@ -204,7 +219,7 @@ def _card(root: Database, summary: _Summary, repo_id: str, title: str, descripti
         "tags:",
         *(f"- {tag}" for tag in tags),
         "size_categories:",
-        f"- {_size_category(len(summary.scans))}",
+        f"- {_size_category(summary.scan_count)}",
         "configs:",
         "- config_name: scans",
         f"  data_files: {layout.INDEX_DIR}/{INDEX_FILES['scans']}",
@@ -237,7 +252,7 @@ def _card(root: Database, summary: _Summary, repo_id: str, title: str, descripti
         "the meshes and NURBS surfaces derived from them, converted from public datasets.",
         "",
         f"{len(summary.datasets)} datasets made from {len(sources)} source datasets of the [BoneHub registry]"
-        f"({REGISTRY_PAGE_URL}), with {subjects} subjects and {len(summary.scans)} scans ({modalities}); {kinds}."
+        f"({REGISTRY_PAGE_URL}), with {subjects} subjects and {summary.scan_count} scans ({modalities}); {kinds}."
         + (f" Website: {homepage}" if homepage else ""),
         "",
         "## Datasets",
@@ -422,13 +437,7 @@ def _license_file(summary: _Summary) -> str:
 
 
 def _upload_guide(root: Path, summary: _Summary, repo_id: str, title: str) -> str:
-    size = 0
-    for scan in summary.scans:
-        size += (scan.path / layout.SCAN_JSON).stat().st_size
-        for data in scan.files():
-            size += data.json_path.stat().st_size
-            if is_publishable(data.license()) and data.path.is_file():
-                size += data.path.stat().st_size
+    size = summary.published_bytes  # the data files; the JSON files add little
     return f"""# Uploading {title} to Hugging Face
 
 This file is listed in `.gitignore`, so it is not uploaded.
@@ -502,13 +511,12 @@ def write_hub_files(
     missing = [name for name in INDEX_FILES.values() if not (root_path / layout.INDEX_DIR / name).is_file()]
     if missing:
         raise FileNotFoundError(f"The card shows the index, which is missing ({', '.join(missing)}); run build_index first.")
-    reader = Database(root_path)
-    summary = _Summary(reader)
+    summary = _Summary(root_path)
     files = {
-        "README.md": _card(reader, summary, repo_id, title, description, homepage),
+        "README.md": _card(summary, repo_id, title, description, homepage),
         "LICENSE.md": _license_file(summary),
         ".gitattributes": _GITATTRIBUTES,
-        ".gitignore": _gitignore(reader),
+        ".gitignore": _gitignore(root_path),
         "upload.md": _upload_guide(root_path.resolve(), summary, repo_id, title),
     }
     written = []

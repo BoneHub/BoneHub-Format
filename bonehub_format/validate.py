@@ -10,6 +10,7 @@ Each problem is a line of text naming the file or folder concerned; an empty lis
 import zipfile
 from collections import Counter
 from collections.abc import Mapping
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from pydantic import ValidationError
@@ -22,6 +23,8 @@ from .registry import as_registry
 from .segmentation_file import read_segmentation_labels
 
 _INDEX_FILES = ("datasets.parquet", "sources.parquet", "scans.parquet", "files.parquet", "labels.parquet")
+#: Subjects checked at once: the time is spent waiting for the disk, often a network share, not computing.
+READ_THREADS = 16
 
 
 def _load(model, path: Path, problems: list[str]):
@@ -32,14 +35,17 @@ def _load(model, path: Path, problems: list[str]):
         return None
 
 
-def _model_labels(scan_folder: Path, kind: str, number: int, problems: list[str], publishing: bool) -> set[str] | None:
-    """The labels a model file of a scan holds; None if they cannot be read."""
+def _model_labels(
+    scan_folder: Path, kind: str, number: int, problems: list[str], publishing: bool, zips_checked: bool = False
+) -> set[str] | None:
+    """The labels a model file of a scan holds; None if they cannot be read. The zip is compared with its folder
+    unless zips_checked (pack has just done so)."""
     folder = layout.model_folder(scan_folder, kind, number)
     zip_path = layout.model_zip(scan_folder, kind, number)
     try:
         if folder.is_dir():
             labels = {f.stem for f in model_folder_files(folder, kind)}
-            if labels and zip_path.is_file() and not zip_is_current(folder, zip_path, kind):
+            if labels and zip_path.is_file() and not zips_checked and not zip_is_current(folder, zip_path, kind):
                 problems.append(f"{zip_path}: does not match {folder.name}/; run pack.")
             elif labels and publishing and not zip_path.is_file():
                 problems.append(f"{folder}: has no {zip_path.name}, which is what gets published; run pack.")
@@ -54,9 +60,10 @@ def _model_labels(scan_folder: Path, kind: str, number: int, problems: list[str]
 
 
 class _Checker:
-    def __init__(self, registry: Mapping[int, str] | None, publishing: bool):
+    def __init__(self, registry: Mapping[int, str] | None, publishing: bool, zips_checked: bool = False):
         self.registry = registry
         self.publishing = publishing
+        self.zips_checked = zips_checked
         self.problems: list[str] = []
         self.missing_licenses: Counter = Counter()  # (dataset folder, source, kind) -> files without a known license
 
@@ -90,32 +97,44 @@ class _Checker:
         if not subject_folders:
             problems.append(f"{dataset_folder}: has no subjects.")
 
-        for subject_folder in subject_folders:
-            subject_json = subject_folder / layout.SUBJECT_JSON
-            subject = _load(SubjectInfo, subject_json, problems)
-            if subject is None:
+        def check(subject_folder: Path) -> "_Checker":
+            checker = _Checker(self.registry, self.publishing, self.zips_checked)
+            checker.check_subject(subject_folder, dataset)
+            return checker
+
+        # each subject on its own, read in parallel; the problems are kept in the order of the subjects
+        with ThreadPoolExecutor(max_workers=READ_THREADS) as pool:
+            for checker in pool.map(check, subject_folders):
+                problems += checker.problems
+                self.missing_licenses.update(checker.missing_licenses)
+
+    def check_subject(self, subject_folder: Path, dataset: DatasetInfo) -> None:
+        problems = self.problems
+        subject_json = subject_folder / layout.SUBJECT_JSON
+        subject = _load(SubjectInfo, subject_json, problems)
+        if subject is None:
+            return
+        if not subject.sources:
+            problems.append(f"{subject_json}: gives the subject's ID in no source.")
+        for source_id in subject.sources:
+            if source_id not in dataset.sources:
+                problems.append(f"{subject_json}: names source {source_id}, which dataset.json does not list.")
+        scan_folders = []
+        for entry in sorted(subject_folder.iterdir()):
+            if entry.name == layout.SUBJECT_JSON:
                 continue
-            if not subject.sources:
-                problems.append(f"{subject_json}: gives the subject's ID in no source.")
-            for source_id in subject.sources:
-                if source_id not in dataset.sources:
-                    problems.append(f"{subject_json}: names source {source_id}, which dataset.json does not list.")
-            scan_folders = []
-            for entry in sorted(subject_folder.iterdir()):
-                if entry.name == layout.SUBJECT_JSON:
-                    continue
-                if layout.parse_scan_dir(entry.name) is None or not entry.is_dir():
-                    problems.append(f"{entry}: not a scan folder (scan-NN).")
-                    continue
-                scan_folders.append(entry)
-            if not scan_folders:
-                problems.append(f"{subject_folder}: has no scans.")
-            names = {folder.name for folder in scan_folders}
-            for scan_folder in scan_folders:
-                if not (scan_folder / layout.SCAN_JSON).is_file():
-                    problems.append(f"{scan_folder}: has no {layout.SCAN_JSON}.")
-                    continue
-                self.check_scan(scan_folder, names, dataset)
+            if layout.parse_scan_dir(entry.name) is None or not entry.is_dir():
+                problems.append(f"{entry}: not a scan folder (scan-NN).")
+                continue
+            scan_folders.append(entry)
+        if not scan_folders:
+            problems.append(f"{subject_folder}: has no scans.")
+        names = {folder.name for folder in scan_folders}
+        for scan_folder in scan_folders:
+            if not (scan_folder / layout.SCAN_JSON).is_file():
+                problems.append(f"{scan_folder}: has no {layout.SCAN_JSON}.")
+                continue
+            self.check_scan(scan_folder, names, dataset)
 
     def check_scan(self, scan_folder: Path, sibling_names: set[str], dataset: DatasetInfo) -> None:
         problems = self.problems
@@ -165,7 +184,7 @@ class _Checker:
             if kind == "segmentation":
                 self._check_segmentation(data_path, set(file_info.labels))
             elif kind in layout.MODEL_KINDS:
-                labels = _model_labels(scan_folder, kind, number, problems, self.publishing)
+                labels = _model_labels(scan_folder, kind, number, problems, self.publishing, self.zips_checked)
                 if labels is not None and labels != set(file_info.labels):
                     problems.append(f"{json_path}: lists {sorted(file_info.labels)}, but the files are of {sorted(labels)}.")
             if self.publishing and file_license(kind, file_info, dataset) is None:
@@ -199,14 +218,21 @@ def _check_index(root: Path, problems: list[str]) -> None:
         problems.append(f"{index}: older than some metadata files; run build_index.")
 
 
-def validate(root: Path, publishing: bool = False, registry: Mapping[int, str] | str | Path | None = None) -> list[str]:
+def validate(
+    root: Path,
+    publishing: bool = False,
+    registry: Mapping[int, str] | str | Path | None = None,
+    zips_checked: bool = False,
+) -> list[str]:
     """The problems found in a database (see the module docstring).
 
     registry: the BoneHub registry (see registry.py), as loaded by load_registry or as its URL or path. When given,
     every source of every dataset must be a BoneHub ID of it.
+    zips_checked: the model zips were just brought up to date by pack, which compared each with its folder; they
+        are not compared again (prepare uses it). A zip that is missing is still a problem.
     """
     root = Path(root)
-    checker = _Checker(None if registry is None else as_registry(registry), publishing)
+    checker = _Checker(None if registry is None else as_registry(registry), publishing, zips_checked)
     problems = checker.problems
     for entry in sorted(root.glob("ds-*")):
         if entry.is_dir() and layout.parse_dataset_dir(entry.name) is None:

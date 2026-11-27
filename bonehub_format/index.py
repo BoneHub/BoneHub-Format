@@ -21,13 +21,17 @@ import os
 import struct
 import tempfile
 import json
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from . import layout
 from .licenses import LICENSE_KINDS, is_publishable
-from .metadata import LABEL_KINDS
-from .reader import Database
+from .metadata import LABEL_KINDS, sort_labels
+from .reader import Database, Subject
 from .segmentation_file import read_segmentation_segments
+
+#: Subjects read at once: the time is spent waiting for the disk, often a network share, not computing.
+READ_THREADS = 16
 
 INDEX_FILES = {
     "datasets": "datasets.parquet",
@@ -83,20 +87,39 @@ def truncated_labels(segmentation_path: Path, image_size: list[int] | None) -> l
     return truncated
 
 
+def _subject_rows(root: Path, dataset, subject_id: int) -> tuple[dict[str, list[dict]], list] | None:
+    """The scan, file and label rows of one subject, and its files (data file, scan key); None if the folder is not a
+    subject (no subject.json)."""
+    try:
+        subject = Subject(dataset, subject_id)
+    except FileNotFoundError:
+        return None
+    rows = {"scans": [], "files": [], "labels": []}
+    files_of_subject = []
+    for scan in subject.scans():
+        files = scan.files()  # listed once per scan
+        _scan_rows(root, scan, rows, files)
+        files_of_subject += [(data, scan.key) for data in files]
+    return rows, files_of_subject
+
+
 def collect_index(root: Path) -> dict[str, list[dict]]:
-    """The rows of the index tables."""
+    """The rows of the index tables. The subjects are read in parallel and kept in their order."""
     root = Path(root)
     database = Database(root)
     rows = {name: [] for name in INDEX_FILES}
     for dataset in database.datasets():
         info = dataset.info
-        scans = list(dataset.scans())
+        candidates = sorted(i for i in (layout.parse_subject_dir(entry.name) for entry in dataset.path.iterdir()) if i is not None)
+        with ThreadPoolExecutor(max_workers=READ_THREADS) as pool:
+            subjects = [found for found in pool.map(lambda i: _subject_rows(root, dataset, i), candidates) if found is not None]
         files_of = {}  # source -> (files, scans) of the dataset that came from it
-        for scan in scans:
-            for data in scan.files():
-                files, keys = files_of.setdefault(data.source, ([], set()))
-                files.append(data)
-                keys.add(scan.key)
+        scan_rows = [row for subject_rows, _ in subjects for row in subject_rows["scans"]]
+        for _, files in subjects:
+            for data, key in files:
+                count, keys = files_of.setdefault(data.source, ([0], set()))
+                count[0] += 1
+                keys.add(key)
         rows["datasets"].append(
             {
                 "dataset_id": dataset.id,
@@ -105,12 +128,12 @@ def collect_index(root: Path) -> dict[str, list[dict]]:
                 "sources": list(info.sources),
                 "remarks": info.remarks,
                 "schema_version": info.schema_version,
-                "subjects": len({scan.subject.id for scan in scans}),
-                "scans": len(scans),
+                "subjects": len({row["subject_id"] for row in scan_rows}),
+                "scans": len(scan_rows),
             }
         )
         for source_id, source in info.sources.items():
-            files, keys = files_of.get(source_id, ([], set()))
+            count, keys = files_of.get(source_id, ([0], set()))
             rows["sources"].append(
                 {
                     "dataset_id": dataset.id,
@@ -123,20 +146,20 @@ def collect_index(root: Path) -> dict[str, list[dict]]:
                     else None,
                     "annotated_labels": source.annotated_labels,
                     "remarks": source.remarks,
-                    "files": len(files),
+                    "files": count[0],
                     "scans": len(keys),
                 }
             )
-        for scan in scans:
-            _scan_rows(root, scan, rows)
+        for subject_rows, _ in subjects:
+            for name in ("scans", "files", "labels"):
+                rows[name] += subject_rows[name]
     return rows
 
 
-def _scan_rows(root: Path, scan, rows: dict[str, list[dict]]) -> None:
+def _scan_rows(root: Path, scan, rows: dict[str, list[dict]], files: list) -> None:
     info, subject_info = scan.info, scan.subject.info
-    image = scan.image
+    image = next((data for data in files if data.kind == "image"), None)
     geometry = nifti_geometry(image.path) if image is not None and image.path.is_file() else None
-    files = scan.files()
     first = image or (files[0] if files else None)
     row_ids = {"scan": scan.key, "dataset_id": scan.dataset.id, "subject_id": scan.subject.id, "scan_id": scan.id}
     truncated_by_file = {}
@@ -189,7 +212,7 @@ def _scan_rows(root: Path, scan, rows: dict[str, list[dict]]) -> None:
             "race": subject_info.race,
             "ethnicity": subject_info.ethnicity,
             "source_scan_id": first.info.source_scan_id if first is not None else None,
-            "sources": scan.sources,
+            "sources": sorted({data.source for data in files}),
             **{field: getattr(info, field) for field in ("modality", "age", "weight", "height", "bmi", "postmortem")},
             **{field: getattr(info, field) for field in ("days_from_baseline", "registered_to")},
             "source_split": first.info.source_split if first is not None else None,
@@ -199,7 +222,7 @@ def _scan_rows(root: Path, scan, rows: dict[str, list[dict]]) -> None:
             "image_published": image is not None and is_publishable(image_license),
             "image_size": geometry[0] if geometry else None,
             "image_spacing": geometry[1] if geometry else None,
-            **{kind: scan.labels(kind) for kind in LABEL_KINDS},
+            **{kind: sort_labels({label for data in files if data.kind == kind for label in data.labels}) for kind in LABEL_KINDS},
             "truncated": sorted({label for found in known for label in found}) if known else None,
             "subject_remarks": subject_info.remarks,
             "remarks": info.remarks,

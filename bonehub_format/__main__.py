@@ -114,7 +114,7 @@ def main(argv: list[str] | None = None) -> int:
     print(f"{len(pack(args.root))} zip(s) written.")
     build_index(args.root)
     print("Index rebuilt.")
-    problems = validate_root(args.root, publishing=True, registry=registry)
+    problems = validate_root(args.root, publishing=True, registry=registry, zips_checked=True)  # pack just checked them
     if problems:
         print("The database is not ready to upload:")
         return _print_problems(problems)

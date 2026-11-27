@@ -9,6 +9,7 @@ import os
 import tempfile
 import zipfile
 import zlib
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from . import layout
@@ -17,6 +18,8 @@ from .metadata import check_label
 #: Files the operating system leaves in folders; they are neither packed nor reported.
 _IGNORED = {"desktop.ini", "thumbs.db", ".ds_store"}
 _FIXED_TIME = (1980, 1, 1, 0, 0, 0)
+#: Subjects packed or unpacked at once: the time is spent reading and writing files, often on a network share.
+THREADS = 8
 
 
 def model_folder_files(folder: Path, kind: str) -> list[Path]:
@@ -125,24 +128,32 @@ def unpack_scan(scan_folder: Path, overwrite: bool = False) -> list[Path]:
     return written
 
 
-def _scan_folders(root: Path):
-    from .reader import Database
+def _each_subject(root: Path, work) -> list[Path]:
+    """Apply work(scan folder) -> paths to every scan of a database, a subject per thread (its folders are listed in
+    the thread too); the paths in the order of the scans."""
+    from .reader import Database, Subject
 
-    for scan in Database(root).scans():
-        yield scan.path
+    def subject(dataset, subject_id: int) -> list[Path]:
+        try:
+            scans = Subject(dataset, subject_id).scans()
+        except FileNotFoundError:
+            return []  # not a subject folder
+        return [path for scan in scans for path in work(scan.path)]
+
+    jobs = [
+        (dataset, subject_id)
+        for dataset in Database(root).datasets()
+        for subject_id in sorted(i for i in (layout.parse_subject_dir(e.name) for e in dataset.path.iterdir()) if i is not None)
+    ]
+    with ThreadPoolExecutor(max_workers=THREADS) as pool:
+        return [path for paths in pool.map(lambda job: subject(*job), jobs) for path in paths]
 
 
 def pack(root: Path) -> list[Path]:
     """Bring every zip of a database up to date with its folder; return the zips written."""
-    written = []
-    for scan_folder in _scan_folders(root):
-        written += pack_scan(scan_folder)
-    return written
+    return _each_subject(root, pack_scan)
 
 
 def unpack(root: Path, overwrite: bool = False) -> list[Path]:
     """Extract every zip of a database into its folder (see unpack_scan); return the folders written."""
-    written = []
-    for scan_folder in _scan_folders(root):
-        written += unpack_scan(scan_folder, overwrite)
-    return written
+    return _each_subject(root, lambda folder: unpack_scan(folder, overwrite))
