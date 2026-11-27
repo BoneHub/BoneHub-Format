@@ -19,11 +19,18 @@ _CHUNK_SLICES = 32
 _INT16 = np.iinfo(np.int16)
 
 
-def read_image(input_path: Path) -> sitk.Image:
+class ShearedImageError(ValueError):
+    """A NIfTI image whose axes are not perpendicular, beyond header rounding (a sheared grid)."""
+
+
+def read_image(input_path: Path, sheared: int | None = None) -> sitk.Image:
     """An image file, or the first DICOM series of a folder.
 
     A NIfTI image whose direction cosines are slightly off orthonormal, which ITK refuses to read, is read with the
-    nearest orthonormal directions instead (see read_nifti_orthonormalized).
+    nearest orthonormal directions instead (see read_nifti_orthonormalized). One whose axes are clearly not
+    perpendicular (a sheared grid) raises ShearedImageError, unless `sheared` gives the SimpleITK interpolator to
+    resample it with onto a grid with perpendicular axes (see read_nifti_resampled): sitk.sitkLinear for an image,
+    sitk.sitkNearestNeighbor for a mask.
     """
     if Path(input_path).is_dir():
         series_reader = sitk.ImageSeriesReader()
@@ -37,7 +44,12 @@ def read_image(input_path: Path) -> sitk.Image:
     except RuntimeError as e:
         if "orthonormal" not in str(e) or not str(input_path).lower().endswith((".nii", ".nii.gz")):
             raise
+    try:
         return read_nifti_orthonormalized(input_path)
+    except ShearedImageError:
+        if sheared is None:
+            raise
+        return read_nifti_resampled(input_path, sheared)
 
 
 _RAS_TO_LPS = np.diag([-1.0, -1.0, 1.0])
@@ -64,7 +76,7 @@ def read_nifti_orthonormalized(input_path: Path) -> sitk.Image:
     u, _, vt = np.linalg.svd(directions)
     orthonormal = u @ vt
     if np.abs(orthonormal - directions).max() > MAX_DIRECTION_ERROR:
-        raise ValueError(f"The directions of '{input_path}' are too far from orthonormal to correct.")
+        raise ShearedImageError(f"The axes of '{input_path}' are not perpendicular (a sheared grid); see read_nifti_resampled.")
     image = sitk.GetImageFromArray(np.asarray(nifti.dataobj).transpose())  # NIfTI is x-fastest, like ITK
     image.SetSpacing([float(s) for s in spacing])
     image.SetOrigin([float(v) for v in _RAS_TO_LPS @ affine[:3, 3]])
@@ -104,14 +116,58 @@ def compact_image(image: sitk.Image) -> sitk.Image:
     return image
 
 
+def nifti_shear(input_path: Path) -> float:
+    """How far the axes of a NIfTI image are from perpendicular, as the largest deviation of the angle between two
+    axes from 90 degrees, from its header alone."""
+    import nibabel as nib
+
+    matrix = nib.load(str(input_path)).affine[:3, :3]
+    directions = matrix / np.linalg.norm(matrix, axis=0)
+    cosines = [abs(float(directions[:, i] @ directions[:, j])) for i, j in ((0, 1), (0, 2), (1, 2))]
+    return float(np.degrees(np.arcsin(min(max(cosines), 1.0))))
+
+
+def read_nifti_resampled(input_path: Path, interpolator: int) -> sitk.Image:
+    """A 3D NIfTI image whose axes are not perpendicular (a sheared grid, as some acquisitions are), resampled onto a
+    grid with perpendicular axes: the nearest orthonormal directions to the source's, the source's voxel spacing, and
+    an extent that covers the whole source volume. Voxels outside the source are 0. `interpolator` is a SimpleITK
+    interpolator: sitk.sitkLinear for an image (written as float32), sitk.sitkNearestNeighbor for a mask (its pixel
+    type is kept). The image and the masks of a scan get the same grid, as they share the source's header."""
+    import nibabel as nib
+
+    nifti = nib.load(str(input_path))
+    if len(nifti.shape) != 3:
+        raise ValueError(f"'{input_path}' is not a 3D image.")
+    matrix = _RAS_TO_LPS @ nifti.affine[:3, :3]
+    offset = _RAS_TO_LPS @ nifti.affine[:3, 3]
+    spacing = np.linalg.norm(matrix, axis=0)
+    u, _, vt = np.linalg.svd(matrix / spacing)
+    directions = u @ vt
+    shape = np.array(nifti.shape[:3])
+    corners = np.array([[i, j, k] for i in (0, shape[0] - 1) for j in (0, shape[1] - 1) for k in (0, shape[2] - 1)], float)
+    along_axes = (corners @ matrix.T + offset) @ directions  # the corners in the coordinates of the new axes
+    low, high = along_axes.min(axis=0), along_axes.max(axis=0)
+    size = (np.ceil((high - low) / spacing - 1e-6).astype(int) + 1).tolist()
+    # the source in its index space (spacing 1, origin 0); the transform maps a point of the new grid to its index
+    source = sitk.GetImageFromArray(np.asarray(nifti.dataobj).transpose())
+    inverse = np.linalg.inv(matrix)
+    to_index = sitk.AffineTransform(3)
+    to_index.SetMatrix(inverse.ravel().tolist())
+    to_index.SetTranslation((-inverse @ offset).tolist())
+    pixel = sitk.sitkFloat32 if interpolator != sitk.sitkNearestNeighbor else source.GetPixelID()
+    return sitk.Resample(
+        source, size, to_index, interpolator, (directions @ low).tolist(), spacing.tolist(), directions.ravel().tolist(), 0.0, pixel
+    )
+
+
 def write_image(image: sitk.Image, output_path: Path) -> None:
     """Write an image as BoneHub stores it: compressed, in the pixel type compact_image chooses."""
     sitk.WriteImage(compact_image(image), str(output_path), useCompression=True)
 
 
-def export_image(input_path: Path, output_path: Path) -> None:
-    """Convert an image file or DICOM folder (see read_image) to `output_path` (see write_image)."""
-    write_image(read_image(input_path), output_path)
+def export_image(input_path: Path, output_path: Path, sheared: int | None = None) -> None:
+    """Convert an image file or DICOM folder (see read_image, and its `sheared`) to `output_path` (see write_image)."""
+    write_image(read_image(input_path, sheared), output_path)
 
 
 def export_nii_segmentation(
