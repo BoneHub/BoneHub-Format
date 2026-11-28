@@ -21,6 +21,7 @@ from pathlib import Path
 
 from . import layout
 from ._version import SCHEMA_VERSION, is_compatible_schema_version
+from .landmarks import read_landmarks
 from .metadata import DatasetInfo, FileInfo, LabeledFileInfo, ScanInfo, SubjectInfo, file_license, sort_labels
 
 
@@ -137,7 +138,8 @@ class Subject:
 
 
 class DataFile:
-    """A data file of a scan and its JSON file: the image (number None), or segmentation-NN, mesh-NN or nurbs-NN."""
+    """A data file of a scan and its JSON file: the image (number None), or segmentation-NN, mesh-NN, nurbs-NN or
+    landmarks-NN."""
 
     def __init__(self, scan: Scan, kind: str, number: int | None = None):
         self.scan = scan
@@ -162,8 +164,8 @@ class DataFile:
 
     @property
     def folder(self) -> Path | None:
-        """The unpacked folder of a model file (mesh-01/), or None."""
-        if self.kind not in layout.MODEL_KINDS:
+        """The unpacked folder of a model or landmarks file (mesh-01/, landmarks-01/), or None."""
+        if self.kind not in layout.FOLDER_KINDS:
             return None
         folder = layout.model_folder(self.scan.path, self.kind, self.number)
         return folder if folder.is_dir() else None
@@ -195,6 +197,13 @@ class DataFile:
             if suffix in suffixes:
                 files.setdefault(stem, []).append(entry)
         return files
+
+    def landmarks(self) -> list[dict]:
+        """The entries of a landmarks file (see landmarks.py), from its folder if the scan has it, else from the zip."""
+        if self.kind != "landmarks":
+            raise ValueError(f"A {self.kind} file holds no landmarks.")
+        source = self.folder or self.path
+        return read_landmarks(source)["landmarks"] if source.exists() else []
 
     def __repr__(self) -> str:
         return f"DataFile('{self.path}')"
@@ -234,7 +243,7 @@ class Scan:
         return DataFile(self, "image") if layout.data_json(self.path, "image").is_file() else None
 
     def files(self, kind: str | None = None) -> list[DataFile]:
-        """The scan's data files of a kind ('image', 'segmentation', 'mesh', 'nurbs'), or of every kind, in order:
+        """The scan's data files of a kind ('image', 'segmentation', 'mesh', 'nurbs', 'landmarks'), or of every kind, in order:
         those that have a JSON file."""
         kinds = layout.DATA_KINDS if kind is None else [layout._check_kind(kind)]
         found = []
@@ -245,7 +254,8 @@ class Scan:
         return [DataFile(self, kind, number or None) for _, number, kind in sorted(found)]
 
     def labels(self, kind: str) -> list[str]:
-        """The labels that have data of a kind ('segmentation', 'mesh', 'nurbs') in any file, in label map order."""
+        """The labels that have data of a kind ('segmentation', 'mesh', 'nurbs', 'landmarks') in any file, in label map
+        order."""
         return sort_labels({label for data in self.files(kind) for label in data.labels})
 
     @property

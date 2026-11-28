@@ -23,6 +23,12 @@ Writing a node: n(NAME, *children, side=..., parts=..., tissues=..., ...), see N
   nearest common ancestor of its members (groups across kinds under GROUPS_ACROSS_KINDS).
 - part_broader: parts that lie inside other parts of this node and the nodes below it (the femoral head in the
   proximal femur). in_part: the part of its parent a node lies in. also_under: further parents of a node.
+
+Landmarks (the LANDMARKS root) are named LANDMARK_<STRUCTURE>_<FEATURE>[_<SIDE>]: the structure they sit on (a label
+without its side), then what they are (LANDMARK_FEMUR_HEAD_CENTER_LEFT, LANDMARK_GLUTEUS_MEDIUS_ORIGIN_RIGHT). A
+landmark node names its structure (on=) and the geometries an entry of it may take (geometry=, see GEOMETRIES);
+landmark() writes one. The landmarks of the muscles (origin, insertion) and of the spine (vertebral centroids, disc
+tips) are made from their structures below, the others are listed.
 """
 
 from __future__ import annotations
@@ -56,8 +62,14 @@ KINDS = {
     "ADIPOSE_TISSUE": ("adipose tissue", "Adipose tissue"),
     "BODY_CAVITIES": ("cavity", "Body cavities"),
     "BODY": ("body region", "Body regions"),
+    "LANDMARKS": ("landmark", "Landmarks"),
     "GROUPS_ACROSS_KINDS": ("group", "Groups across kinds"),
 }
+#: Roots that are no label themselves.
+UNLABELLED_ROOTS = ("LANDMARKS", "GROUPS_ACROSS_KINDS")
+LANDMARK_PREFIX = "LANDMARK_"
+#: The geometries of a landmark entry (see bonehub_format/landmarks.py); "area" is a mask or a surface patch.
+GEOMETRIES = ("point", "points", "line", "cylinder", "circle", "sphere", "frame", "area")
 #: The webpage's sections of the skeleton: region node -> section (anything else of the skeleton: 'Whole skeleton').
 BONE_SECTIONS = {"HEAD_BONES": "Head", "VERTEBRAL_COLUMN": "Spine", "THORAX_BONES": "Thorax",
                  "SHOULDER_AND_ARM_BONES": "Shoulder and arm", "HAND_BONES": "Hand", "PELVIC_GIRDLE": "Pelvis",
@@ -107,10 +119,17 @@ class N:
     members: list | None = None  # an aggregate: the labels it unites
     also_under: list = field(default_factory=list)  # further parents
     note: str = ""
+    on: str | None = None  # a landmark: the structure it sits on, a label without side (FEMUR, ADDUCTOR_MAGNUS_DISTAL)
+    geometry: tuple = ()  # a landmark: the geometries its entries may take (GEOMETRIES)
 
 
 def n(name, *children, **kw):
     return N(name, list(children), **kw)
+
+
+def landmark(on: str, feature: str, geometry: str = "point", side: str = "paired", note: str = "") -> N:
+    """The landmark LANDMARK_<on>_<feature> on structure `on`; geometry 'point', or several as 'point|sphere'."""
+    return N(f"{LANDMARK_PREFIX}{on}_{feature}", side=side, on=on, geometry=tuple(geometry.split("|")), note=note)
 
 
 BONE = ("CORTICAL", "TRABECULAR")
@@ -219,44 +238,78 @@ TREE = {
           n("MEDIAL_MENISCUS"), n("LATERAL_MENISCUS"), side="paired"),
         n("FOOT_CARTILAGE", n("TALUS_CARTILAGE"), side="paired"),
     ],
-    "LIGAMENTS": [n("LEG_LIGAMENTS", n("ANTERIOR_CRUCIATE_LIGAMENT"), n("POSTERIOR_CRUCIATE_LIGAMENT"),
+    "LIGAMENTS": [n("PELVIS_LIGAMENTS", n("SACROTUBEROUS_LIGAMENT"), side="paired"),
+         n("HIP_LIGAMENTS", n("ILIOFEMORAL_LIGAMENT", parts=("TRANSVERSE", "DESCENDING")), n("ISCHIOFEMORAL_LIGAMENT"),
+           n("PUBOFEMORAL_LIGAMENT"), n("LIGAMENT_OF_HEAD_OF_FEMUR"), side="paired"),
+         n("LEG_LIGAMENTS", n("ANTERIOR_CRUCIATE_LIGAMENT"), n("POSTERIOR_CRUCIATE_LIGAMENT"),
            n("MEDIAL_COLLATERAL_LIGAMENT"), n("LATERAL_COLLATERAL_LIGAMENT"), n("PATELLAR_LIGAMENT"),
-           side="paired")],
+           n("OBLIQUE_POPLITEAL_LIGAMENT"),
+           n("MENISCOFEMORAL_LIGAMENTS", n("ANTERIOR_MENISCOFEMORAL_LIGAMENT"), n("POSTERIOR_MENISCOFEMORAL_LIGAMENT")),
+           side="paired"),
+         n("ANKLE_LIGAMENTS", n("CALCANEOFIBULAR_LIGAMENT"), n("ANTERIOR_TALOFIBULAR_LIGAMENT"),
+           n("POSTERIOR_TALOFIBULAR_LIGAMENT"),
+           n("DELTOID_LIGAMENT", n("TIBIOCALCANEAL_LIGAMENT"), n("ANTERIOR_TIBIOTALAR_LIGAMENT"),
+             n("POSTERIOR_TIBIOTALAR_LIGAMENT"), n("TIBIONAVICULAR_LIGAMENT")), side="paired")],
     "JOINTS": [n("HEAD_JOINTS", n("TEMPOROMANDIBULAR_JOINT"), side="paired"),
          n("SHOULDER_AND_ARM_JOINTS", n("SHOULDER_JOINT"), side="paired"),
          n("PELVIS_JOINTS", n("HIP_JOINT", tissues=("PROSTHESIS",), side="paired"),
            n("SACROILIAC_JOINT", side="paired"), n("PUBIC_SYMPHYSIS", side="single")),
-         n("LEG_JOINTS", n("KNEE_JOINT"), side="paired")],
+         n("LEG_JOINTS", n("KNEE_JOINT"), n("ANKLE_JOINT", note="talocrural joint"), side="paired"),
+         n("FOOT_JOINTS", n("SUBTALAR_JOINT"), side="paired")],
     "MUSCLES": [
         n("HEAD_MUSCLES", n("EXTRAOCULAR_MUSCLES"), side="paired"),
         n("NECK_MUSCLES", n("PHARYNGEAL_CONSTRICTORS", n("SUPERIOR_PHARYNGEAL_CONSTRICTOR"),
                                n("MIDDLE_PHARYNGEAL_CONSTRICTOR"),
-                               n("INFERIOR_PHARYNGEAL_CONSTRICTOR", n("CRICOPHARYNGEUS")), side="single")),
-        n("BACK_MUSCLES", n("AUTOCHTHONOUS_BACK_MUSCLES", n("ERECTOR_SPINAE")), side="paired"),
-        n("ABDOMINAL_WALL_MUSCLES", n("RECTUS_ABDOMINIS"), side="paired"),
+                               n("INFERIOR_PHARYNGEAL_CONSTRICTOR", n("CRICOPHARYNGEUS")), side="single"),
+          n("SCALENES", n("SCALENUS_ANTERIOR"), n("SCALENUS_MEDIUS"), n("SCALENUS_POSTERIOR"), side="paired"),
+          n("STERNOCLEIDOMASTOID", side="paired"),
+          n("PREVERTEBRAL_MUSCLES", n("LONGUS_CAPITIS"), n("RECTUS_CAPITIS_ANTERIOR"), n("RECTUS_CAPITIS_LATERALIS"),
+            side="paired"),
+          n("INFRAHYOID_MUSCLES", n("STERNOHYOID"), n("STERNOTHYROID"), n("THYROHYOID"), n("OMOHYOID"), side="paired")),
+        n("BACK_MUSCLES",
+          n("AUTOCHTHONOUS_BACK_MUSCLES",
+            n("ERECTOR_SPINAE", n("ILIOCOSTALIS", parts=("LUMBORUM", "THORACIS", "CERVICIS")),
+              n("LONGISSIMUS", parts=("THORACIS", "CERVICIS", "CAPITIS")), n("SPINALIS", parts=("THORACIS",))),
+            n("TRANSVERSOSPINALES", n("SEMISPINALIS", parts=("THORACIS", "CERVICIS", "CAPITIS")), n("MULTIFIDUS"),
+              n("ROTATORES")),
+            n("SPLENIUS", parts=("CAPITIS", "CERVICIS")), n("LEVATORES_COSTARUM"),
+            n("SUBOCCIPITAL_MUSCLES", n("RECTUS_CAPITIS_POSTERIOR_MAJOR"), n("RECTUS_CAPITIS_POSTERIOR_MINOR"),
+              n("OBLIQUUS_CAPITIS_SUPERIOR"), n("OBLIQUUS_CAPITIS_INFERIOR"))),
+          n("EXTRINSIC_BACK_MUSCLES", n("TRAPEZIUS"), n("LATISSIMUS_DORSI"), n("RHOMBOID_MAJOR"), n("RHOMBOID_MINOR"),
+            n("LEVATOR_SCAPULAE"), n("SERRATUS_POSTERIOR_SUPERIOR"), n("SERRATUS_POSTERIOR_INFERIOR")),
+          side="paired"),
+        n("THORAX_MUSCLES", n("EXTERNAL_INTERCOSTALS"), n("INTERNAL_INTERCOSTALS"), n("SUBCOSTALES"),
+          n("TRANSVERSUS_THORACIS"), n("SERRATUS_ANTERIOR"), n("SUBCLAVIUS"), side="paired"),
+        n("ABDOMINAL_WALL_MUSCLES", n("RECTUS_ABDOMINIS"), n("EXTERNAL_OBLIQUE"), n("INTERNAL_OBLIQUE"),
+          n("TRANSVERSUS_ABDOMINIS"), n("QUADRATUS_LUMBORUM"), side="paired"),
         n("HIP_MUSCLES",
-          n("GLUTEAL_MUSCLES", n("GLUTEUS_MAXIMUS"), n("GLUTEUS_MEDIUS"), n("GLUTEUS_MINIMUS"),
-            n("TENSOR_FASCIAE_LATAE")),
+          n("GLUTEAL_MUSCLES", n("GLUTEUS_MAXIMUS", parts=("SUPERIOR", "INFERIOR")),
+            n("GLUTEUS_MEDIUS", parts=("ANTERIOR", "POSTERIOR")), n("GLUTEUS_MINIMUS"), n("TENSOR_FASCIAE_LATAE")),
           n("DEEP_HIP_ROTATORS", n("PIRIFORMIS"), n("GEMELLUS_SUPERIOR"), n("GEMELLUS_INFERIOR"),
-            n("OBTURATOR_INTERNUS"), n("OBTURATOR_EXTERNUS"), n("QUADRATUS_FEMORIS")),
-          n("ILIOPSOAS", n("ILIACUS"), n("PSOAS_MAJOR")), side="paired"),
+            n("OBTURATOR_INTERNUS"), n("OBTURATOR_EXTERNUS", parts=("LATERAL", "MEDIAL")), n("QUADRATUS_FEMORIS")),
+          n("ILIOPSOAS", n("ILIACUS"), n("PSOAS_MAJOR"), parts=("SUPERIOR", "INFERIOR"),
+            note="TLEM's superior and inferior parts: two lines of action of the common insertion"), side="paired"),
         n("LEG_MUSCLES",
           n("THIGH_MUSCLES",
-            n("QUADRICEPS_FEMORIS", n("RECTUS_FEMORIS"), n("VASTUS_LATERALIS"), n("VASTUS_MEDIALIS"),
+            n("QUADRICEPS_FEMORIS", n("RECTUS_FEMORIS", parts=("LATERAL", "MEDIAL")),
+              n("VASTUS_LATERALIS", parts=("SUPERIOR", "INFERIOR")), n("VASTUS_MEDIALIS", parts=("SUPERIOR", "INFERIOR")),
               n("VASTUS_INTERMEDIUS")),
-            n("THIGH_ADDUCTORS", n("ADDUCTOR_LONGUS"), n("ADDUCTOR_BREVIS"), n("ADDUCTOR_MAGNUS"),
-              n("GRACILIS"), n("PECTINEUS")),
+            n("THIGH_ADDUCTORS", n("ADDUCTOR_LONGUS"), n("ADDUCTOR_BREVIS"),
+              n("ADDUCTOR_MAGNUS", parts=("PROXIMAL", "MIDDLE", "DISTAL")), n("GRACILIS"), n("PECTINEUS")),
             n("HAMSTRINGS", n("BICEPS_FEMORIS", parts=("LONG_HEAD", "SHORT_HEAD")), n("SEMITENDINOSUS"),
               n("SEMIMEMBRANOSUS")),
-            n("SARTORIUS")),
+            n("SARTORIUS"),
+            n("PES_ANSERINUS", members=["SARTORIUS", "GRACILIS", "SEMITENDINOSUS"],
+              note="the common insertion of sartorius, gracilis and semitendinosus on the tibia")),
           n("LOWER_LEG_MUSCLES",
-            n("ANTERIOR_LEG_MUSCLES", n("TIBIALIS_ANTERIOR"), n("EXTENSOR_DIGITORUM_LONGUS"),
-              n("EXTENSOR_HALLUCIS_LONGUS")),
+            n("ANTERIOR_LEG_MUSCLES", n("TIBIALIS_ANTERIOR"), n("EXTENSOR_DIGITORUM_LONGUS", parts=("LATERAL", "MEDIAL")),
+              n("EXTENSOR_HALLUCIS_LONGUS"), n("FIBULARIS_TERTIUS")),
             n("FIBULAR_MUSCLES", n("FIBULARIS_LONGUS"), n("FIBULARIS_BREVIS")),
             n("SUPERFICIAL_POSTERIOR_LEG_MUSCLES", n("GASTROCNEMIUS", parts=("MEDIAL_HEAD", "LATERAL_HEAD")),
-              n("SOLEUS"), n("PLANTARIS")),
-            n("DEEP_POSTERIOR_LEG_MUSCLES", n("TIBIALIS_POSTERIOR"), n("FLEXOR_DIGITORUM_LONGUS"),
-              n("FLEXOR_HALLUCIS_LONGUS"), n("POPLITEUS"))), side="paired"),
+              n("SOLEUS", parts=("LATERAL", "MEDIAL")), n("PLANTARIS"),
+              n("TRICEPS_SURAE", members=["GASTROCNEMIUS", "SOLEUS"])),
+            n("DEEP_POSTERIOR_LEG_MUSCLES", n("TIBIALIS_POSTERIOR", parts=("TIBIAL", "FIBULAR")),
+              n("FLEXOR_DIGITORUM_LONGUS"), n("FLEXOR_HALLUCIS_LONGUS"), n("POPLITEUS"))), side="paired"),
     ],
     "HEART_AND_PERICARDIUM": [n("HEART",
            n("LEFT_ATRIUM", n("LEFT_ATRIAL_APPENDAGE"), tissues=("LUMEN",)),
@@ -372,6 +425,147 @@ TREE = {
          n("HEAD_VESSELS", side="paired", members=["BRAIN_ARTERIES", "INTERNAL_CAROTID_ARTERY_INTRACRANIAL", "INTRACRANIAL_VEINS"],
            note="CADS 'Vascular structure of head': intracranial arteries and the dural sinuses (checked in the data)")],
 }
+
+# --------------------------------------------------------------------------------------------- landmarks
+def _points(on: str, features: str, geometry: str = "point", side: str = "paired") -> list[N]:
+    return [landmark(on, f, geometry, side) for f in features.split()]
+
+
+#: Landmarks on bones and joints: (structure, features, geometry, side).
+_LISTED = [
+    # pelvis
+    *_points("HIP_BONE", "ANTERIOR_SUPERIOR_ILIAC_SPINE ANTERIOR_INFERIOR_ILIAC_SPINE POSTERIOR_SUPERIOR_ILIAC_SPINE "
+             "POSTERIOR_INFERIOR_ILIAC_SPINE ILIAC_CREST_HIGHEST_POINT PUBIC_TUBERCLE PUBIC_TUBERCLE_SUPERIOR "
+             "PUBIC_TUBERCLE_INFERIOR ISCHIAL_SPINE ISCHIAL_TUBEROSITY GREATER_SCIATIC_NOTCH ILIOPECTINEAL_LINE_LATERAL "
+             "ILIOPUBIC_EMINENCE"),
+    landmark("HIP_BONE", "ACETABULUM_CENTER", "point|sphere"),
+    landmark("HIP_JOINT", "CENTER", "point|sphere", note="a hip joint centre tied to neither bone (e.g. a functional one)"),
+    *_points("SACROILIAC_JOINT", "SUPERIOR_END INFERIOR_END PELVIC_BRIM"),
+    *_points("SACRUM", "PROMONTORY CENTER APEX S3_S4_JUNCTION", side="single"),
+    landmark("SACRUM", "SURFACE_POINT", side="halves", note="a point without an anatomical name; its source name is kept"),
+    landmark("COCCYX", "TIP", side="single"),
+    *_points("PUBIC_SYMPHYSIS", "SUPERIOR MIDDLE", side="single"),
+    landmark("PUBIC_SYMPHYSIS", "INFERIOR", side="halves"),
+    # femur and knee
+    landmark("FEMUR", "HEAD_CENTER", "point|sphere"),
+    *_points("FEMUR", "HEAD_SUPERIOR HEAD_INFERIOR HEAD_ANTERIOR HEAD_POSTERIOR HEAD_MEDIAL HEAD_LATERAL "
+             "NECK_ISTHMUS_SUPERIOR NECK_ISTHMUS_INFERIOR NECK_ISTHMUS_ANTERIOR NECK_ISTHMUS_POSTERIOR "
+             "GREATER_TROCHANTER GREATER_TROCHANTER_SUPERIOR GREATER_TROCHANTER_LATERAL GREATER_TROCHANTER_ANTERIOR "
+             "GREATER_TROCHANTER_POSTERIOR LESSER_TROCHANTER THIRD_TROCHANTER TROCHANTERIC_FOSSA "
+             "INTERTROCHANTERIC_CREST LINEA_ASPERA_PROXIMAL LINEA_ASPERA_DISTAL SHAFT_ANTERIOR SHAFT_POSTERIOR "
+             "SHAFT_MEDIAL SHAFT_LATERAL LATERAL_EPICONDYLE MEDIAL_EPICONDYLE LATERAL_CONDYLE_POSTERIOR "
+             "MEDIAL_CONDYLE_POSTERIOR LATERAL_CONDYLE_PROXIMOPOSTERIOR MEDIAL_CONDYLE_PROXIMOPOSTERIOR "
+             "LATERAL_CONDYLE_DISTAL MEDIAL_CONDYLE_DISTAL LATERAL_CONDYLE_PROXIMAL MEDIAL_CONDYLE_PROXIMAL "
+             "INTERCONDYLAR_NOTCH"),
+    landmark("FEMUR", "PATELLAR_SURFACE", "point|points"),
+    landmark("FEMUR", "NECK_AXIS", "line"),
+    landmark("FEMUR", "TRANSEPICONDYLAR_AXIS", "line|cylinder"),
+    landmark("FEMUR", "LATERAL_CONDYLE_CENTER", "point|cylinder"),
+    landmark("FEMUR", "MEDIAL_CONDYLE_CENTER", "point|cylinder"),
+    landmark("KNEE_JOINT", "CENTER"),
+    landmark("KNEE_JOINT", "FLEXION_AXIS", "line"),
+    # lower leg and foot
+    *_points("TIBIA", "MEDIAL_CONDYLE LATERAL_CONDYLE MEDIAL_INTERCONDYLAR_TUBERCLE TUBEROSITY FIBULAR_FACET "
+             "MEDIAL_MALLEOLUS MEDIAL_MALLEOLUS_ARTICULAR_SURFACE DISTAL_ANTERIOR DISTAL_POSTERIOR SHAFT_SURFACE_POINT"),
+    *_points("FIBULA", "HEAD HEAD_APEX HEAD_ANTERIOR HEAD_LATERAL HEAD_POSTERIOR LATERAL_MALLEOLUS "
+             "LATERAL_MALLEOLUS_ANTERIOR LATERAL_MALLEOLUS_POSTERIOR SHAFT_SURFACE_POINT"),
+    *_points("CALCANEUS", "SUSTENTACULUM_TALI TUBER_LATERAL_PROCESS TUBER_MEDIAL_PROCESS TUBER_MEDIAL_INFERIOR "
+             "TUBER_LATERAL_INFERIOR CUBOID_FACET_INFERIOR_LATERAL FIBULAR_TROCHLEA HEEL GROUND_CONTACT"),
+    *_points("METATARSAL_1", "HEAD BASE GROUND_CONTACT"),
+    *_points("METATARSAL_5", "HEAD BASE GROUND_CONTACT"),
+    *_points("DISTAL_PHALANX_FOOT_1", "TIP GROUND_CONTACT"),
+    landmark("HIP_BONE", "SURFACE_POINT", note="a point without an anatomical name; its source name is kept"),
+    landmark("CALCANEUS", "SURFACE_POINT", note="a point without an anatomical name; its source name is kept"),
+    landmark("ANKLE_JOINT", "CENTER"),
+    landmark("ANKLE_JOINT", "AXIS", "line"),
+    landmark("SUBTALAR_JOINT", "AXIS", "line"),
+    # shoulder
+    landmark("SCAPULA", "GLENOID_CENTER", "point|circle"),
+    *_points("SCAPULA", "TRIGONUM_SPINAE INFERIOR_ANGLE ACROMION_POSTEROLATERAL ACROMIOCLAVICULAR_FACET"),
+    landmark("HUMERUS", "HEAD_CENTER", "point|sphere"),
+    *_points("HUMERUS", "LESSER_TUBEROSITY GREATER_TUBEROSITY GREATER_TUBEROSITY_CREST LATERAL_EPICONDYLE "
+             "MEDIAL_EPICONDYLE"),
+    landmark("HUMERUS", "SHAFT_AXIS", "line|cylinder"),
+    # wrist: the principal axes of inertia of each bone, and the radius' anatomical frame
+    *[landmark(bone, "PRINCIPAL_AXES", "frame") for bone in
+      ("RADIUS", "ULNA", "SCAPHOID", "LUNATE", "TRIQUETRUM", "PISIFORM", "TRAPEZIUM", "TRAPEZOID", "CAPITATE", "HAMATE",
+       *[f"METACARPAL_{i}" for i in range(1, 6)])],
+    landmark("RADIUS", "COORDINATE_SYSTEM", "frame"),
+    # muscles: the attachments of a whole group, where a source gives one
+    landmark("TRICEPS_SURAE", "INSERTION", "point|points|area", note="the calcaneal (Achilles) tendon on the calcaneus"),
+    landmark("QUADRICEPS_FEMORIS", "INSERTION", "point|points|area"),
+    landmark("PES_ANSERINUS", "INSERTION", "point|points|area"),
+    landmark("PES_ANSERINUS", "VIA_POINT", "points"),
+    # ligament groups whose sources do not say which member they mean
+    *[landmark("MENISCOFEMORAL_LIGAMENTS", end, "point|points|area") for end in ("ORIGIN", "INSERTION")],
+]
+
+#: Muscles a source gives more than their attachments of: the points their path wraps around (via points), fibre
+#: directions (for the pennation angle) and points on their surface.
+_VIA_POINTS = ("EXTENSOR_DIGITORUM_LONGUS EXTENSOR_HALLUCIS_LONGUS FLEXOR_DIGITORUM_LONGUS FLEXOR_HALLUCIS_LONGUS "
+               "GASTROCNEMIUS GRACILIS ILIACUS OBTURATOR_EXTERNUS OBTURATOR_INTERNUS FIBULARIS_BREVIS FIBULARIS_LONGUS "
+               "FIBULARIS_TERTIUS POPLITEUS SARTORIUS SEMITENDINOSUS TIBIALIS_ANTERIOR TIBIALIS_POSTERIOR PLANTARIS "
+               "PIRIFORMIS").split()
+_FIBERS = ("RECTUS_FEMORIS", "SOLEUS", "VASTUS_INTERMEDIUS")
+_SURFACES = ("GLUTEUS_MAXIMUS",)
+_NO_ATTACHMENTS = ("HEAD_MUSCLES", "PHARYNGEAL_CONSTRICTORS")
+
+
+def _muscle_landmarks() -> list[N]:
+    """The origin and insertion of every muscle (a muscle node without children) and of each part of one, of the
+    ligaments too; via points, fibres and surfaces where listed (for the muscle and each of its parts); via points of
+    every ligament (TLEM digitises the path of some)."""
+    out = []
+
+    def walk(node: N):
+        if node.name in _NO_ATTACHMENTS or node.members is not None:
+            return
+        if node.children:
+            for child in node.children:
+                walk(child)
+            for part in node.parts:  # the parts of a group (ILIOPSOAS superior and inferior)
+                out.extend(landmark(f"{node.name}_{part}", end, "point|points|area") for end in ("ORIGIN", "INSERTION"))
+            return
+        whole_and_parts = (node.name, *(f"{node.name}_{part}" for part in node.parts))
+        for on in whole_and_parts:
+            out.extend(landmark(on, end, "point|points|area") for end in ("ORIGIN", "INSERTION"))
+        for on in whole_and_parts:
+            if node.name in _VIA_POINTS or ligaments:
+                out.append(landmark(on, "VIA_POINT", "points"))
+            if node.name in _FIBERS:
+                out.append(landmark(on, "FIBER", "line|points"))
+            if node.name in _SURFACES:
+                out.append(landmark(on, "SURFACE", "points"))
+
+    ligaments = False
+    for group in TREE["MUSCLES"]:
+        walk(group)
+    ligaments = True
+    for group in TREE["LIGAMENTS"]:
+        walk(group)
+    return out
+
+
+def _spine_landmarks() -> list[N]:
+    """The centroid of every vertebra, and the posterior tip of every intervertebral disc."""
+    out = []
+
+    def walk(node: N, suffix: str, prefix: str):
+        if node.name.startswith(prefix) and node.members is None:
+            out.append(landmark(node.name, suffix, side="single"))
+        for child in node.children:
+            walk(child, suffix, prefix)
+
+    for group in TREE["SKELETON"]:
+        if group.name == "VERTEBRAL_COLUMN":
+            walk(group, "CENTROID", "VERTEBRA_")
+    for group in TREE["CARTILAGE"]:
+        if group.name == "SPINE_CARTILAGE":
+            walk(group, "POSTERIOR_TIP", "INTERVERTEBRAL_DISC_")
+    return out
+
+
+TREE["LANDMARKS"] = _LISTED + _spine_landmarks() + _muscle_landmarks()
 
 #: What the kind roots hold themselves (they are nodes too).
 ROOTS = {

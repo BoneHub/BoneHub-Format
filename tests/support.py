@@ -118,6 +118,35 @@ def export_mesh(scan: ScanSource, output_folder: Path) -> None:
         shutil.copyfile(path, output_folder / path.name)
 
 
+#: The landmarks every scan of the landmark converter gets: a sphere, two raters' points, an axis, an area patch.
+LANDMARKS = [
+    {"name": "LANDMARK_FEMUR_HEAD_CENTER_LEFT", "type": "sphere", "center": [4.0, 5.0, 2.0], "radius": 1.5,
+     "source_name": "femur head"},
+    {"name": "LANDMARK_FEMUR_GREATER_TROCHANTER_LEFT", "type": "point", "position": [7.0, 6.5, 3.0], "rater": 1},
+    {"name": "LANDMARK_FEMUR_GREATER_TROCHANTER_LEFT", "type": "point", "position": [7.2, 6.4, 3.1], "rater": 2},
+    {"name": "LANDMARK_KNEE_JOINT_FLEXION_AXIS_LEFT", "type": "line", "points": [[1.0, 1.0, 9.0], [9.0, 1.0, 9.0]]},
+    {"name": "LANDMARK_GLUTEUS_MEDIUS_ORIGIN_LEFT", "type": "area", "file": "LANDMARK_GLUTEUS_MEDIUS_ORIGIN_LEFT.stl",
+     "element": "anterior"},
+]
+
+
+def read_dataset_with_landmarks(dataset_root: Path) -> list[SubjectSource]:
+    """read_dataset, with landmarks on every scan (the same mesh file stands in for the area patch)."""
+    subjects = read_dataset(dataset_root)
+    for subject in subjects:
+        for scan in subject.scans:
+            scan.landmarks_paths = scan.mesh_paths
+            scan.landmarks_origin = "manual"
+    return subjects
+
+
+def export_landmarks(scan: ScanSource, output_folder: Path) -> None:
+    from bonehub_format.landmarks import write_landmarks
+
+    shutil.copyfile(scan.landmarks_paths[0], output_folder / "LANDMARK_GLUTEUS_MEDIUS_ORIGIN_LEFT.stl")
+    write_landmarks(output_folder, LANDMARKS)
+
+
 class SyntheticConverter(DatasetConverter):
     """The synthetic source SOURCE_ID; with contributions, its scans also hold the segmentations of PROVIDER_ID."""
 
@@ -128,6 +157,7 @@ class SyntheticConverter(DatasetConverter):
         contributions: bool = False,
         provider_license: str | Licenses = "CC-BY-NC-4.0",
         source_id: int = SOURCE_ID,
+        landmarks: bool = False,
     ):
         licenses = license if isinstance(license, Licenses) else Licenses.all(license)
         source = SourceInfo(name="Synthetic", license=licenses, annotated_labels=["FEMUR_RIGHT", "FEMUR_LEFT"])
@@ -137,3 +167,6 @@ class SyntheticConverter(DatasetConverter):
         self.custom_data_handlers.read_dataset = read_dataset_with_contributions if contributions else read_dataset
         self.custom_data_handlers.export_segmentation = export_segmentation
         self.custom_data_handlers.export_mesh = export_mesh
+        if landmarks:
+            self.custom_data_handlers.read_dataset = read_dataset_with_landmarks
+            self.custom_data_handlers.export_landmarks = export_landmarks

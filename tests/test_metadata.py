@@ -28,7 +28,8 @@ class TestSourceInfo(unittest.TestCase):
     def test_license_per_kind(self):
         info = SourceInfo(name="A", license=Licenses(image=RESTRICTED, segmentation="CC-BY-4.0"))
         self.assertEqual((info.license_of("image"), info.license_of("segmentation"), info.license_of("mesh")), ("restricted", "CC-BY-4.0", None))
-        self.assertEqual(Licenses.all("MIT").to_dict(), {"image": "MIT", "segmentation": "MIT", "mesh": "MIT", "nurbs": "MIT"})
+        self.assertEqual(Licenses.all("MIT").to_dict(),
+                         {"image": "MIT", "segmentation": "MIT", "mesh": "MIT", "nurbs": "MIT", "landmarks": "MIT"})
         for bad in ("CC BY 4.0", "cc-by-4.0", "Other", ""):
             with self.subTest(license=bad), self.assertRaises(ValidationError):
                 Licenses(image=bad)
@@ -195,7 +196,9 @@ class TestLayout(unittest.TestCase):
         self.assertEqual(layout.data_json(x, "segmentation", 2), x / "segmentation-02.json")
         self.assertEqual(layout.model_zip(x, "nurbs", 1), x / "nurbs-01.zip")
         self.assertEqual(layout.model_folder(x, "mesh", 3), x / "mesh-03")
-        for bad in (("image", 1), ("segmentation", None), ("segmentation", 0), ("segmentation", 100), ("landmarks", 1)):
+        self.assertEqual(layout.data_file(x, "landmarks", 1), x / "landmarks-01.zip")
+        self.assertEqual(layout.model_folder(x, "landmarks", 2), x / "landmarks-02")
+        for bad in (("image", 1), ("segmentation", None), ("segmentation", 0), ("segmentation", 100), ("landmark", 1)):
             with self.subTest(file=bad), self.assertRaises(ValueError):
                 layout.data_file(x, *bad)
         entries = {

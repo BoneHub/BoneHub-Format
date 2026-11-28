@@ -3,9 +3,9 @@
 // `site` (data.js) and, for the cards, `siteDetails` (details/<dataset>.js, loaded when first needed); see
 // update_data.py.
 
-const KINDS = ["image", "segmentation", "mesh", "nurbs"];
-const LABELED_KINDS = ["segmentation", "mesh", "nurbs"];
-const KIND_NAMES = { image: "Image", segmentation: "Segmentation", mesh: "Mesh", nurbs: "NURBS" };
+const KINDS = ["image", "segmentation", "mesh", "nurbs", "landmarks"];
+const LABELED_KINDS = ["segmentation", "mesh", "nurbs", "landmarks"];
+const KIND_NAMES = { image: "Image", segmentation: "Segmentation", mesh: "Mesh", nurbs: "NURBS", landmarks: "Landmarks" };
 const SEX_NAMES = { M: "Male", F: "Female", O: "Other" };
 const SEX_COLORS = { M: "var(--series-male)", F: "var(--series-female)", unknown: "var(--series-unknown)" };
 const PAGE_SIZE = 25;
@@ -389,7 +389,7 @@ function renderFilters() {
         <input type="text" id="structure-filter" list="structure-options" placeholder="e.g. femur, patella left" aria-label="Add a structure">
         <datalist id="structure-options">${PRETTY.map((name) => `<option value="${esc(name)}">`).join("")}</datalist>
         <label class="filter-select">in <select id="found-in" aria-label="Type of data the structures are in">
-            <option value="any">any data</option><option value="segmentation">a segmentation</option><option value="mesh">a mesh</option><option value="nurbs">a NURBS surface</option>
+            <option value="any">any data</option><option value="segmentation">a segmentation</option><option value="mesh">a mesh</option><option value="nurbs">a NURBS surface</option><option value="landmarks">landmarks</option>
         </select></label>
         <div class="chips" id="structure-chips"></div>
         <p class="filter-hint">Press Enter to add. A structure without a side covers both sides and all of its parts; a word covers every structure it names. A scan must have every structure added.</p></fieldset>`);

@@ -4,7 +4,7 @@
     subject.json                  SubjectInfo: the person, and their ID in each source
     scan.json                     ScanInfo: the scan (modality, age, weight, ...)
     image.json                    FileInfo: where the image came from and its license, where it differs
-    segmentation-NN.json, mesh-NN.json, nurbs-NN.json
+    segmentation-NN.json, mesh-NN.json, nurbs-NN.json, landmarks-NN.json
                                   LabeledFileInfo: the same, and the labels the file holds with their origin
 
 They hold only what cannot be read from the data files themselves. Image geometry, label counts and which bones touch
@@ -122,6 +122,7 @@ class Licenses(_Metadata):
     segmentation: str | None = Field(None, description="License of the segmentations")
     mesh: str | None = Field(None, description="License of the meshes")
     nurbs: str | None = Field(None, description="License of the NURBS surfaces")
+    landmarks: str | None = Field(None, description="License of the landmarks")
 
     @field_validator(*LICENSE_KINDS)
     @classmethod

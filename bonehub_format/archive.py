@@ -1,7 +1,8 @@
-"""The zips in which a scan's per-label model files are published: mesh-01.zip, nurbs-01.zip, ...
+"""The zips in which a scan's per-label model files and its landmarks are published: mesh-01.zip, nurbs-01.zip,
+landmarks-01.zip, ...
 
-A scan keeps its model files in numbered folders of their kind (mesh-01/, nurbs-01/), one file per label and file
-type. pack() writes each folder into a zip of the same name; the zips are published and the folders are not. unpack() does the reverse for a downloaded copy. A zip is rewritten only when its
+A scan keeps them in numbered folders of their kind (mesh-01/, nurbs-01/, landmarks-01/): one file per label and file
+type for the models, landmarks.json and its area files for the landmarks (see landmarks.py). pack() writes each folder into a zip of the same name; the zips are published and the folders are not. unpack() does the reverse for a downloaded copy. A zip is rewritten only when its
 folder has changed, and the same files always give the same zip.
 """
 
@@ -13,6 +14,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from . import layout
+from .landmarks import AREAS_FILE, LANDMARKS_JSON, is_landmarks_file
 from .metadata import check_label
 
 #: Files the operating system leaves in folders; they are neither packed nor reported.
@@ -22,17 +24,33 @@ _FIXED_TIME = (1980, 1, 1, 0, 0, 0)
 THREADS = 8
 
 
+def belongs_in(kind: str, name: str) -> bool:
+    """Whether a file name belongs in a folder of a kind: <LABEL><suffix> of a model kind, or a landmarks file."""
+    if kind == "landmarks":
+        return is_landmarks_file(name)
+    path = Path(name)
+    if path.suffix.lower() not in layout.MODEL_KINDS[kind]:
+        return False
+    try:
+        check_label(path.stem)
+    except ValueError:
+        return False
+    return True
+
+
 def model_folder_files(folder: Path, kind: str) -> list[Path]:
-    """The files of a model folder, checked: each is named <LABEL><suffix> with a suffix of its kind."""
-    suffixes = layout.MODEL_KINDS[kind]
+    """The files of a folder of a folder kind, checked (see belongs_in)."""
     files = []
     for entry in sorted(Path(folder).iterdir()):
         if entry.name.lower() in _IGNORED:
             continue
-        if not entry.is_file() or entry.suffix.lower() not in suffixes:
-            raise ValueError(f"'{entry}' does not belong in a {kind} folder, which holds only {', '.join(suffixes)} files.")
-        check_label(entry.stem)
+        if not entry.is_file() or not belongs_in(kind, entry.name):
+            what = (f"{LANDMARKS_JSON}, {AREAS_FILE} and <LANDMARK>.stl files" if kind == "landmarks"
+                    else f"<LABEL>{'/'.join(layout.MODEL_KINDS[kind])} files")
+            raise ValueError(f"'{entry}' does not belong in a {kind} folder, which holds only {what}.")
         files.append(entry)
+    if kind == "landmarks" and files and not any(f.name == LANDMARKS_JSON for f in files):
+        raise ValueError(f"The landmarks folder '{folder}' has no {LANDMARKS_JSON}.")
     return files
 
 
@@ -59,7 +77,7 @@ def model_entries(scan_folder: Path) -> list[tuple[str, int, Path, Path]]:
     found = {}
     for entry in Path(scan_folder).iterdir():
         parsed = layout.parse_scan_entry(entry.name)
-        if parsed is None or parsed[0] not in layout.MODEL_KINDS or parsed[2] == "json":
+        if parsed is None or parsed[0] not in layout.FOLDER_KINDS or parsed[2] == "json":
             continue
         kind, number, _ = parsed
         found[(kind, number)] = (layout.model_folder(scan_folder, kind, number), layout.model_zip(scan_folder, kind, number))
@@ -67,7 +85,7 @@ def model_entries(scan_folder: Path) -> list[tuple[str, int, Path, Path]]:
 
 
 def pack_folder(folder: Path, kind: str) -> bool:
-    """Write <folder>.zip from a model folder (e.g. mesh-01/) unless it is current; return True if it was written.
+    """Write <folder>.zip from a folder (e.g. mesh-01/) unless it is current; return True if it was written.
 
     An empty or missing folder leaves no zip.
     """
@@ -100,7 +118,7 @@ def pack_folder(folder: Path, kind: str) -> bool:
 
 
 def pack_scan(scan_folder: Path) -> list[Path]:
-    """Write the zips of a scan's model folders that are not current; return the zips written."""
+    """Write the zips of a scan's folders that are not current; return the zips written."""
     written = []
     for kind, _, folder, zip_path in model_entries(scan_folder):
         if folder.is_dir() and pack_folder(folder, kind):
@@ -109,8 +127,8 @@ def pack_scan(scan_folder: Path) -> list[Path]:
 
 
 def unpack_scan(scan_folder: Path, overwrite: bool = False) -> list[Path]:
-    """Extract the scan's model zips into folders that do not exist yet (or into all, with overwrite); return the
-    folders written."""
+    """Extract the scan's zips into folders that do not exist yet (or into all, with overwrite); return the folders
+    written."""
     written = []
     for kind, _, folder, zip_path in model_entries(scan_folder):
         if not zip_path.is_file() or (folder.is_dir() and not overwrite):
@@ -119,7 +137,7 @@ def unpack_scan(scan_folder: Path, overwrite: bool = False) -> list[Path]:
         with zipfile.ZipFile(zip_path) as archive:
             for info in archive.infolist():
                 name = Path(info.filename)
-                if name.name != info.filename or name.suffix.lower() not in layout.MODEL_KINDS[kind]:
+                if name.name != info.filename or not belongs_in(kind, name.name):
                     raise ValueError(f"'{zip_path}' holds '{info.filename}', which does not belong in it.")
                 with archive.open(info) as source, open(folder / name.name, "wb") as target:
                     while chunk := source.read(1 << 20):

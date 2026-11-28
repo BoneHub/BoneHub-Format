@@ -20,6 +20,8 @@ from pathlib import Path
 from . import labelmap_spec as default_spec
 
 MAX_NODE_NAME, MAX_NAME = 40, 64
+#: A landmark's name holds its structure's: its node may be as long as a label leaves room for, with its side.
+MAX_LANDMARK_NODE_NAME = MAX_NAME - len("_RIGHT")
 #: The muscles, bones and their joints: kinds whose groups are paired when all their children are.
 MUSCULOSKELETAL = ("SKELETON", "CARTILAGE", "LIGAMENTS", "JOINTS", "MUSCLES")
 
@@ -97,6 +99,19 @@ class Tables:
     # ----------------------------------------------------------------------------------------- what a label is
     def kind_of(self, name: str) -> str:
         return self.spec.KINDS[self.nodes[self.labels[name].node].kind][0]
+
+    def is_landmark(self, name: str) -> bool:
+        return self.nodes[self.labels[name].node].kind == "LANDMARKS"
+
+    def landmark_on(self, name: str) -> str:
+        """The label of the structure a landmark sits on, with the landmark's side where the structure has one."""
+        label = self.labels[name]
+        on = self.nodes[label.node].spec.on
+        sided = f"{on}_{label.side}" if label.side else on
+        return sided if sided in self.labels else on
+
+    def geometry_of(self, name: str) -> tuple[str, ...]:
+        return self.nodes[self.labels[name].node].spec.geometry
 
     def category_of(self, name: str) -> str:
         tissue = self.labels[name].tissue
@@ -241,8 +256,8 @@ def build(spec=default_spec) -> Tables:
     for root in spec.KINDS:
         s = roots.get(root) or spec.N(root)
         s.children = tree.get(root, [])
-        # GROUPS_ACROSS_KINDS holds the aggregates of several kinds; it is no label itself
-        walk(s, None, root, None, None, labelled=root != "GROUPS_ACROSS_KINDS")
+        # GROUPS_ACROSS_KINDS holds the aggregates of several kinds, LANDMARKS the landmarks; neither is a label itself
+        walk(s, None, root, None, None, labelled=root not in spec.UNLABELLED_ROOTS)
     return Tables(spec, labels, nodes, problems)
 
 
@@ -284,11 +299,13 @@ def check(t: Tables, published: list[str] | None = None, published_covers: dict[
             p.append(f"{name}: an unknown side on a structure that is not paired")
     for name, node in t.nodes.items():
         s = node.spec
-        if node.kind != "GROUPS_ACROSS_KINDS" or node.parent:
+        if node.kind not in spec.UNLABELLED_ROOTS or node.parent:
             if not any(_name(name, None, None, side) in t.labels for side in (None, *spec.SIDES)):
                 p.append(f"node {name} has no label")
-        if len(name) > MAX_NODE_NAME:
-            p.append(f"node {name}: longer than {MAX_NODE_NAME} characters")
+        longest = MAX_LANDMARK_NODE_NAME if node.kind == "LANDMARKS" else MAX_NODE_NAME
+        if len(name) > longest:
+            p.append(f"node {name}: longer than {longest} characters")
+        p.extend(_landmark_problems(t, name, node))
         for word in (*spec.SIDES, spec.SIDE_UNKNOWN):
             if name.endswith("_" + word):
                 p.append(f"node {name} ends in the side word {word}")
@@ -367,6 +384,28 @@ def check(t: Tables, published: list[str] | None = None, published_covers: dict[
         for name, covered in published_covers.items():
             if now.get(name) != covered:
                 p.append(f"what the published label {name} covers changed")
+    return p
+
+
+def _landmark_problems(t: Tables, name: str, node: Node) -> list[str]:
+    """A landmark node names a structure of another kind and its geometries, and nothing else; no other node does."""
+    spec, s, p = t.spec, node.spec, []
+    if node.kind != "LANDMARKS":
+        if name.startswith(spec.LANDMARK_PREFIX) or s.on is not None or s.geometry:
+            p.append(f"node {name}: only a landmark is named {spec.LANDMARK_PREFIX}... and has on= and geometry=")
+        return p
+    if not node.parent:
+        return p
+    if not name.startswith(f"{spec.LANDMARK_PREFIX}{s.on}_"):
+        p.append(f"landmark {name}: its name does not start with {spec.LANDMARK_PREFIX}{s.on}_")
+    if s.on not in t.labels or t.nodes[t.labels[s.on].node].kind == "LANDMARKS":
+        p.append(f"landmark {name}: on={s.on} is not a structure label")
+    elif node.policy == "paired" and f"{s.on}_LEFT" not in t.labels:
+        p.append(f"landmark {name}: paired, but {s.on} has no sides")
+    if not s.geometry or any(g not in spec.GEOMETRIES for g in s.geometry):
+        p.append(f"landmark {name}: geometry {s.geometry} is not among {spec.GEOMETRIES}")
+    if s.children or s.parts or s.tissues or s.members is not None:
+        p.append(f"landmark {name}: a landmark has no children, parts, tissues or members")
     return p
 
 

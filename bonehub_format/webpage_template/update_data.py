@@ -25,8 +25,8 @@ HERE = Path(__file__).resolve().parent
 # Filled in by build_webpage: the database's Hugging Face repository and the BoneHub registry's Dataset Browser.
 HF_REPO_ID = "{{HF_REPO_ID}}"
 REGISTRY_PAGE_URL = "{{REGISTRY_PAGE_URL}}"
-LICENSE_KINDS = ("image", "segmentation", "mesh", "nurbs")
-LABELED_KINDS = ("segmentation", "mesh", "nurbs")
+LICENSE_KINDS = ("image", "segmentation", "mesh", "nurbs", "landmarks")
+LABELED_KINDS = ("segmentation", "mesh", "nurbs", "landmarks")
 DETAILS_DIR = "details"
 
 

@@ -109,7 +109,7 @@ def excluded_from_upload(root: Path) -> list[tuple[str, str]]:
         (".bonehub_qc/", ".bonehub_qc/*"),
         ("__pycache__/", "*__pycache__/*"),
         ("*.tmp", "*.tmp"),
-        *((f"**/{kind}-*/", f"*/{kind}-*/*") for kind in layout.MODEL_KINDS),
+        *((f"**/{kind}-*/", f"*/{kind}-*/*") for kind in layout.FOLDER_KINDS),
     ]
     excluded += [(f"/{path}", path) for path in _withheld(root)]
     return excluded
@@ -123,7 +123,7 @@ def _gitignore(root: Path) -> str:
     ]
     for pattern, _ in excluded_from_upload(root):
         if pattern == "**/mesh-*/":
-            lines.append("# Per-label model files: their zips (mesh-NN.zip, nurbs-NN.zip) are uploaded instead")
+            lines.append("# Model and landmarks folders: their zips (mesh-NN.zip, nurbs-NN.zip, landmarks-NN.zip) are uploaded instead")
         elif pattern.startswith("/ds-") and not any(line.startswith("# Not published") for line in lines):
             lines.append(f"# Not published: files under a restricted license ('{RESTRICTED}') or with no known license")
         lines.append(pattern)
@@ -207,7 +207,7 @@ def _sources_text(info) -> str:
 def _card(summary: _Summary, repo_id: str, title: str, description: str | None, homepage: str | None) -> str:
     tags = ["medical", "bone", "3d", "bonehub-format"]
     tags += sorted({_MODALITY_TAGS.get(m, m.lower()) for m in summary.modalities if m != "unknown"})
-    tags += [kind for kind in layout.MODEL_KINDS if summary.kind_counts[kind]]
+    tags += [kind for kind in layout.FOLDER_KINDS if summary.kind_counts[kind]]
     yaml = [
         "---",
         f"pretty_name: {_yaml(title)}",
@@ -285,7 +285,8 @@ def _card(summary: _Summary, repo_id: str, title: str, description: str | None, 
         "        ├── segmentation-01.nrrd  + segmentation-01.json  its source, labels and their origin",
         "        ├── segmentation-02.nrrd  + segmentation-02.json  another source's segmentation of the same image",
         "        ├── mesh-01.zip           + mesh-01.json          <LABEL>.stl",
-        "        └── nurbs-01.zip          + nurbs-01.json         <LABEL>.iges / <LABEL>.step",
+        "        ├── nurbs-01.zip          + nurbs-01.json         <LABEL>.iges / <LABEL>.step",
+        "        └── landmarks-01.zip      + landmarks-01.json     landmarks.json (points, axes, spheres ...), areas",
         "index/                           Parquet tables of the datasets, sources, scans, files and labels",
         "```",
         "",
@@ -382,7 +383,8 @@ def _license_file(summary: _Summary) -> str:
         "",
         "Each file is under the license of its source (a dataset of the BoneHub registry, named in the file's JSON), "
         "for its kind of data: `image.nii.gz` under the source's image license, `segmentation-NN.nrrd` under its "
-        "segmentation license, `mesh-NN.zip` and `nurbs-NN.zip` under its mesh or NURBS license. Collections of a source "
+        "segmentation license, `mesh-NN.zip` and `nurbs-NN.zip` under its mesh or NURBS license, `landmarks-NN.zip` under "
+        "its landmarks license. Collections of a source "
         "with terms of their own, and files with a license of their own, are listed below the table; "
         "`index/files.parquet` (`license`) gives the license of every file.",
         "",
@@ -448,7 +450,7 @@ This file is listed in `.gitignore`, so it is not uploaded.
 python -m bonehub_format prepare "{root}" --repo-id {repo_id} --title "{title}"
 ```
 
-This brings the zips of the model folders (`mesh-NN/`, `nurbs-NN/`) up to date, rebuilds the index, checks the database, and writes
+This brings the zips of the model and landmarks folders (`mesh-NN/`, `nurbs-NN/`, `landmarks-NN/`) up to date, rebuilds the index, checks the database, and writes
 the card, `LICENSE.md`, `.gitattributes`, `.gitignore`, this file and `github-webpage/`. Fix any problem it reports
 before uploading.
 

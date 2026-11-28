@@ -7,6 +7,7 @@
 Each problem is a line of text naming the file or folder concerned; an empty list means none was found.
 """
 
+import json
 import zipfile
 from collections import Counter
 from collections.abc import Mapping
@@ -18,6 +19,10 @@ from pydantic import ValidationError
 from . import layout
 from ._version import SCHEMA_VERSION, is_compatible_schema_version
 from .archive import model_folder_files, zip_is_current
+from .labelmap import is_landmark
+from .landmarks import AREAS_FILE, LANDMARKS_JSON
+from .landmarks import labels as landmark_labels
+from .landmarks import problems as landmark_problems
 from .metadata import DatasetInfo, FileInfo, LabeledFileInfo, ScanInfo, SubjectInfo, file_license
 from .registry import as_registry
 from .labelmap import LabelMap
@@ -39,13 +44,17 @@ def _load(model, path: Path, problems: list[str]):
 def _model_labels(
     scan_folder: Path, kind: str, number: int, problems: list[str], publishing: bool, zips_checked: bool = False
 ) -> set[str] | None:
-    """The labels a model file of a scan holds; None if they cannot be read. The zip is compared with its folder
-    unless zips_checked (pack has just done so)."""
+    """The labels a model or landmarks file of a scan holds; None if they cannot be read. The zip is compared with its
+    folder unless zips_checked (pack has just done so). A landmarks file's landmarks.json is checked too."""
     folder = layout.model_folder(scan_folder, kind, number)
     zip_path = layout.model_zip(scan_folder, kind, number)
     try:
         if folder.is_dir():
-            labels = {f.stem for f in model_folder_files(folder, kind)}
+            files = model_folder_files(folder, kind)
+            if kind == "landmarks":
+                labels = _landmarks_labels(folder, {f.name: f.read_bytes for f in files}, problems) if files else set()
+            else:
+                labels = {f.stem for f in files}
             if labels and zip_path.is_file() and not zips_checked and not zip_is_current(folder, zip_path, kind):
                 problems.append(f"{zip_path}: does not match {folder.name}/; run pack.")
             elif labels and publishing and not zip_path.is_file():
@@ -53,11 +62,33 @@ def _model_labels(
             return labels
         if zip_path.is_file():
             with zipfile.ZipFile(zip_path) as archive:
+                if kind == "landmarks":
+                    return _landmarks_labels(zip_path, {n: (lambda n=n: archive.read(n)) for n in archive.namelist()}, problems)
                 return {Path(name).stem for name in archive.namelist()}
     except (ValueError, OSError) as e:
         problems.append(f"{folder}: {e}")
         return None
     return set()
+
+
+def _landmarks_labels(where: Path, files: dict, problems: list[str]) -> set[str] | None:
+    """The landmarks of a landmarks folder or zip (file name -> a function that reads it), after checking its
+    landmarks.json against the format and the files next to it."""
+    if LANDMARKS_JSON not in files:
+        problems.append(f"{where}: has no {LANDMARKS_JSON}.")
+        return None
+    try:
+        document = json.loads(files[LANDMARKS_JSON]().decode("utf-8"))
+    except ValueError as e:
+        problems.append(f"{where}/{LANDMARKS_JSON}: {e}")
+        return None
+    found = landmark_problems(document, set(files))
+    problems += [f"{where}: {problem}" for problem in found]
+    if found:
+        return None
+    if AREAS_FILE in files and not any(e.get("file") == AREAS_FILE for e in document["landmarks"]):
+        problems.append(f"{where}: holds {AREAS_FILE}, which no landmark names.")
+    return set(landmark_labels(document))
 
 
 class _Checker:
@@ -182,9 +213,13 @@ class _Checker:
                 continue
             if file_info.subset is not None and file_info.subset not in (source.subsets or {}):
                 problems.append(f"{json_path}: names subset '{file_info.subset}', which source {file_info.source} lacks.")
+            misplaced = [label for label in getattr(file_info, "labels", {}) if is_landmark(label) != (kind == "landmarks")]
+            if misplaced:
+                what = "are not landmarks" if kind == "landmarks" else "are landmarks, which only landmarks files hold"
+                problems.append(f"{json_path}: {misplaced} {what}.")
             if kind == "segmentation":
                 self._check_segmentation(data_path, set(file_info.labels))
-            elif kind in layout.MODEL_KINDS:
+            elif kind in layout.FOLDER_KINDS:
                 labels = _model_labels(scan_folder, kind, number, problems, self.publishing, self.zips_checked)
                 if labels is not None and labels != set(file_info.labels):
                     problems.append(f"{json_path}: lists {sorted(file_info.labels)}, but the files are of {sorted(labels)}.")

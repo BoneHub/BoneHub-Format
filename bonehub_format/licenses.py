@@ -1,6 +1,7 @@
 """Licenses the data of a dataset can be under.
 
-A license is given per kind of data (LICENSE_KINDS: the image, the segmentation, the meshes, the NURBS surfaces), for
+A license is given per kind of data (LICENSE_KINDS: the image, the segmentation, the meshes, the NURBS surfaces, the
+landmarks), for
 each source in dataset.json, for a subset of a source, or for one file in its JSON file (see metadata.Licenses). Each is one of
 the SPDX identifiers in LICENSES, or RESTRICTED. RESTRICTED marks data under a custom license with restricted access:
 it is converted like any other data, but its files stay out of the published database, and the dataset card says
@@ -10,7 +11,7 @@ where to obtain them. The kinds of one scan can differ, e.g. a restricted image 
 RESTRICTED = "restricted"
 
 #: The kinds of data a license is given for.
-LICENSE_KINDS: tuple[str, ...] = ("image", "segmentation", "mesh", "nurbs")
+LICENSE_KINDS: tuple[str, ...] = ("image", "segmentation", "mesh", "nurbs", "landmarks")
 
 _CC_ELEMENTS = {"BY": "Attribution", "SA": "ShareAlike", "NC": "NonCommercial", "ND": "NoDerivatives"}
 _CC_VARIANTS = ("BY", "BY-SA", "BY-NC", "BY-NC-SA", "BY-ND", "BY-NC-ND")

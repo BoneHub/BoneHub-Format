@@ -10,6 +10,8 @@ SourceInfo), and sets the handlers of `custom_data_handlers`:
     export_mesh(scan, output_folder)                    writes <LABEL>.stl files into the scan's mesh folder
     export_nurbs(scan, output_folder)                   writes <LABEL>.iges and/or <LABEL>.step files into its
                                                         nurbs folder
+    export_landmarks(scan, output_folder)               writes the scan's landmarks folder: its area files, then
+                                                        landmarks.json (landmarks.write_landmarks)
 
 Where the same subject or image is also in other sources, the scan merges their data: each `Contribution` of a
 ScanSource is what another source gives the scan, exported with that source's own handlers. The dataset lists every
@@ -18,7 +20,8 @@ dataset of its own; its converter, if it has subjects of its own too, leaves out
 that each person is stored once.
 
 Each data file is written with a JSON file of the same name that names its source: image.nii.gz and image.json, and
-numbered files for the rest (segmentation-01.nrrd and segmentation-01.json, mesh-01/ and mesh-01.json, ...), the converted
+numbered files for the rest (segmentation-01.nrrd and segmentation-01.json, mesh-01/ and mesh-01.json, landmarks-01/
+and landmarks-01.json, ...), the converted
 source's own first, then those of the contributions in their order.
 
 Subjects are numbered in the natural order of their source_subject_id (case_2 before case_10), and the scans of a
@@ -58,6 +61,8 @@ from . import layout
 from ._version import SCHEMA_VERSION, is_compatible_schema_version
 from .archive import model_folder_files, pack_scan
 from .export import export_image as export_image_file
+from .landmarks import labels as landmark_labels
+from .landmarks import read_landmarks
 from .metadata import DatasetInfo, FileInfo, LabeledFileInfo, Licenses, ScanInfo, SourceInfo, SubjectInfo, check_origin
 from .segmentation_file import read_segmentation, read_segmentation_labels, write_indexed_segmentation
 
@@ -95,6 +100,7 @@ class CustomDataHandlers(BaseModel):
     export_segmentation: Callable[..., None] | None = None
     export_mesh: Callable[..., None] | None = None
     export_nurbs: Callable[..., None] | None = None
+    export_landmarks: Callable[..., None] | None = None
 
     model_config = ConfigDict(strict=True, extra="forbid", validate_assignment=True)
 
@@ -116,21 +122,23 @@ class _ProvidedData(BaseModel):
     segmentation_paths: list[Path] | None = Field(None, description="Source files of the segmentation")
     mesh_paths: list[Path] | None = Field(None, description="Source files of the meshes")
     nurbs_paths: list[Path] | None = Field(None, description="Source files of the NURBS surfaces")
+    landmarks_paths: list[Path] | None = Field(None, description="Source files of the landmarks")
     segmentation_origin: Origin = Field("source", description="Origin of every label, or label -> origin")
     mesh_origin: Origin = Field("source", description="Origin of every mesh, or label -> origin")
     nurbs_origin: Origin = Field("source", description="Origin of every NURBS surface, or label -> origin")
+    landmarks_origin: Origin = Field("source", description="Origin of every landmark, or label -> origin")
     remarks: str | None = Field(None, description="Remarks about this source's data of the scan, for each of its files")
 
     model_config = ConfigDict(strict=True, extra="forbid", validate_assignment=True)
 
-    @field_validator("segmentation_origin", "mesh_origin", "nurbs_origin")
+    @field_validator("segmentation_origin", "mesh_origin", "nurbs_origin", "landmarks_origin")
     @classmethod
     def _check_origin(cls, value):
         return _check_origins(value)
 
     def has_data(self) -> bool:
         return self.image_path is not None or any(
-            getattr(self, f"{kind}_paths") for kind in ("segmentation", *layout.MODEL_KINDS)
+            getattr(self, f"{kind}_paths") for kind in ("segmentation", *layout.FOLDER_KINDS)
         )
 
 
@@ -659,7 +667,7 @@ class DatasetConverter:
                 segmentation_path.unlink(missing_ok=True)
                 self.logger.warning(f"{where}: its segmentation holds no labels and is left out.")
 
-        for kind in layout.MODEL_KINDS:
+        for kind in layout.FOLDER_KINDS:
             if not getattr(data, f"{kind}_paths"):
                 continue
             handler = getattr(handlers, f"export_{kind}")
@@ -669,7 +677,11 @@ class DatasetConverter:
             folder = layout.model_folder(scan_path, kind, number)
             folder.mkdir()
             handler(data, folder)
-            labels = sorted({path.stem for path in model_folder_files(folder, kind)})
+            files = model_folder_files(folder, kind)
+            if kind == "landmarks":
+                labels = landmark_labels(read_landmarks(folder)) if files else []
+            else:
+                labels = sorted({path.stem for path in files})
             if labels:
                 origin = getattr(data, f"{kind}_origin")
                 info = file_info(kind, LabeledFileInfo)

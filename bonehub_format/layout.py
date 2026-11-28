@@ -15,7 +15,8 @@
                 ├── segmentation-01.nrrd  + segmentation-01.json
                 ├── segmentation-02.nrrd  + segmentation-02.json
                 ├── mesh-01/   <LABEL>.stl                 -> mesh-01.zip   + mesh-01.json
-                └── nurbs-01/  <LABEL>.iges, <LABEL>.step  -> nurbs-01.zip  + nurbs-01.json
+                ├── nurbs-01/  <LABEL>.iges, <LABEL>.step  -> nurbs-01.zip  + nurbs-01.json
+                └── landmarks-01/  landmarks.json, areas.nrrd, <LANDMARK>.stl  -> landmarks-01.zip + landmarks-01.json
 
 A folder's name is its ID. A dataset's number has no meaning outside its database: the registry datasets it was made
 from are listed in its dataset.json. Every data file has a JSON file of the same name that says which source it came
@@ -40,8 +41,11 @@ MODEL_KINDS: dict[str, tuple[str, ...]] = {
     "nurbs": (".iges", ".step"),
 }
 
+#: Kinds kept in a numbered folder and published as its zip: the model kinds, and the landmarks (see landmarks.py).
+FOLDER_KINDS: tuple[str, ...] = (*MODEL_KINDS, "landmarks")
+
 #: Kinds of numbered data files, which hold labels.
-LABELED_KINDS: tuple[str, ...] = ("segmentation", *MODEL_KINDS)
+LABELED_KINDS: tuple[str, ...] = ("segmentation", *FOLDER_KINDS)
 
 #: Every kind of data file of a scan.
 DATA_KINDS: tuple[str, ...] = ("image", *LABELED_KINDS)
@@ -140,7 +144,7 @@ def _check_number(kind: str, number: int | None) -> int | None:
 
 
 def data_file(scan_folder: Path, kind: str, number: int | None = None) -> Path:
-    """The data file of a kind that is published: image.nii.gz, segmentation-02.nrrd, mesh-01.zip, nurbs-01.zip."""
+    """The data file of a kind that is published: image.nii.gz, segmentation-02.nrrd, mesh-01.zip, landmarks-01.zip."""
     number = _check_number(_check_kind(kind), number)
     if kind == "image":
         return Path(scan_folder) / IMAGE_FILE
@@ -156,19 +160,19 @@ def data_json(scan_folder: Path, kind: str, number: int | None = None) -> Path:
 
 
 def model_folder(scan_folder: Path, kind: str, number: int) -> Path:
-    """The folder of a scan's model files of a kind: mesh-01/ (published as mesh-01.zip)."""
-    return Path(scan_folder) / f"{_check_kind(kind, MODEL_KINDS)}-{_check_number(kind, number):02d}"
+    """The folder of a scan's files of a folder kind: mesh-01/, landmarks-01/ (published as mesh-01.zip, ...)."""
+    return Path(scan_folder) / f"{_check_kind(kind, FOLDER_KINDS)}-{_check_number(kind, number):02d}"
 
 
 def model_zip(scan_folder: Path, kind: str, number: int) -> Path:
-    """The zip of a model folder: mesh-01.zip."""
-    return data_file(scan_folder, _check_kind(kind, MODEL_KINDS), number)
+    """The zip of a folder: mesh-01.zip, landmarks-01.zip."""
+    return data_file(scan_folder, _check_kind(kind, FOLDER_KINDS), number)
 
 
 def parse_scan_entry(name: str) -> tuple[str, int | None, str] | None:
     """What a file or folder of a scan folder is, from its name: (kind, number, role), the role being 'data' (the
-    published file: image.nii.gz, segmentation-01.nrrd, mesh-01.zip), 'json' (its JSON file) or 'folder' (a model
-    folder, mesh-01/). The image has no number. None for any other name, scan.json included."""
+    published file: image.nii.gz, segmentation-01.nrrd, mesh-01.zip), 'json' (its JSON file) or 'folder' (a folder
+    of a folder kind, mesh-01/, landmarks-01/). The image has no number. None for any other name, scan.json included."""
     if name == IMAGE_FILE:
         return "image", None, "data"
     if name == IMAGE_JSON:

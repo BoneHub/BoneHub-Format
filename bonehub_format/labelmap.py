@@ -20,6 +20,16 @@ ARTERIES, VEINS, LYMPHOID_ORGANS, BRAIN, SPINAL_CORD, CEREBROSPINAL_FLUID, NERVE
 RESPIRATORY_SYSTEM, DIGESTIVE_SYSTEM, URINARY_SYSTEM, GENITAL_ORGANS, ENDOCRINE_GLANDS, INTEGUMENT, ADIPOSE_TISSUE,
 BODY_CAVITIES and BODY (body regions). labelmap_spec.py holds it: read it to see where a structure sits.
 
+Landmarks are labels too, of the LANDMARKS root, and only landmarks files hold them. Their names start with LANDMARK_,
+then the structure they sit on, then what they are:
+
+    LANDMARK_FEMUR_HEAD_CENTER_LEFT          the centre of the left femoral head (a point, or a fitted sphere)
+    LANDMARK_GLUTEUS_MEDIUS_ORIGIN_RIGHT     the origin of the right gluteus medius (points, or an area)
+    LANDMARK_VERTEBRA_L3_CENTROID            the centroid of L3
+
+    landmark_on(LabelMap.LANDMARK_FEMUR_HEAD_CENTER_LEFT)     LabelMap.FEMUR_LEFT
+    geometry_of(LabelMap.LANDMARK_FEMUR_HEAD_CENTER_LEFT)     ('point', 'sphere')
+
 What a label covers: the labels under it.
 
     covers(LabelMap.RIBS, LabelMap.RIB_7_LEFT)                  True   (a group covers its members)
@@ -57,6 +67,9 @@ __all__ = [
     "covers",
     "labels_covered",
     "label_for",
+    "is_landmark",
+    "landmark_on",
+    "geometry_of",
 ]
 
 #: The label map's labels and nodes, built from labelmap_spec.py (see labelmap_build.py).
@@ -134,3 +147,24 @@ def labels_covered(label: LabelMap | str) -> list[LabelMap]:
 def label_for(node: str, part: str | None = None, tissue: str | None = None, side: str | None = None) -> LabelMap:
     """The label of a structure, part, tissue and side: label_for('FEMUR', 'PROXIMAL', side='LEFT')."""
     return LabelMap[_build._name(node, part, tissue, side)]
+
+
+def is_landmark(label: LabelMap | str) -> bool:
+    """Whether the label is a landmark (LANDMARK_...), which landmarks files hold, not segmentations or models."""
+    return TABLES.is_landmark(_name(label))
+
+
+def landmark_on(label: LabelMap | str) -> LabelMap:
+    """The structure a landmark sits on, with the landmark's side: FEMUR_LEFT for LANDMARK_FEMUR_HEAD_CENTER_LEFT."""
+    name = _name(label)
+    if not TABLES.is_landmark(name):
+        raise ValueError(f"{name} is not a landmark.")
+    return LabelMap[TABLES.landmark_on(name)]
+
+
+def geometry_of(label: LabelMap | str) -> tuple[str, ...]:
+    """The geometries an entry of a landmark may take: ('point', 'sphere') for LANDMARK_FEMUR_HEAD_CENTER."""
+    name = _name(label)
+    if not TABLES.is_landmark(name):
+        raise ValueError(f"{name} is not a landmark.")
+    return TABLES.geometry_of(name)
