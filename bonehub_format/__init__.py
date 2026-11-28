@@ -61,6 +61,7 @@ from .segmentation_file import (
     read_segmentation_segments,
     segment_number_dtype,
     write_indexed_segmentation,
+    write_regions,
     write_segmentation,
 )
 from .validate import validate
@@ -117,6 +118,7 @@ __all__ = [
     "read_segmentation_segments",
     "segment_number_dtype",
     "write_segmentation",
+    "write_regions",
     "write_indexed_segmentation",
     "REGISTRY_URL",
     "load_registry",

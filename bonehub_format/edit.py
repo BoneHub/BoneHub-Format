@@ -38,8 +38,9 @@ from .segmentation_file import (
     SEGMENTATION_SUFFIX,
     Segment,
     _io_modules,
+    full_region,
     read_segmentation,
-    write_segmentation,
+    write_regions,
 )
 
 if TYPE_CHECKING:
@@ -202,8 +203,41 @@ def update_segmentation(
         raise ValueError(f"overlap is 'layer', 'replace' or 'keep', not {overlap!r}.")
 
     def regions(layer_images, segments):
-        arrays = [sitk.GetArrayFromImage(image) for image in layer_images]
-        return {Segment(s.label, instance=s.instance, rater=s.rater): arrays[s.layer] == s.number for s in segments}
+        """The region (see write_regions) of each segment of a file, made from its box in its layer when needed."""
+        layers = []  # per layer: its image (which the array views) and each number's box
+        for image in layer_images:
+            shapes = sitk.LabelShapeStatisticsImageFilter()
+            shapes.Execute(image)
+            layers.append((image, sitk.GetArrayViewFromImage(image), {int(n): shapes.GetBoundingBox(n) for n in shapes.GetLabels()}))
+
+        def region(segment):
+            def make():
+                _, array, boxes = layers[segment.layer]
+                if segment.number not in boxes:
+                    return None
+                x, y, z, sx, sy, sz = boxes[segment.number]
+                box = (slice(z, z + sz), slice(y, y + sy), slice(x, x + sx))
+                return box, array[box] == segment.number
+
+            return make
+
+        return {Segment(s.label, instance=s.instance, rater=s.rater): region(s) for s in segments}
+
+    def union(found) -> object:
+        taken = np.zeros(tuple(reversed(grid.GetSize())), dtype=bool)
+        for make in found.values():
+            if (made := make()) is not None:
+                taken[made[0]] |= made[1]
+        return taken
+
+    def without(make, taken):
+        def made():
+            if (region := make()) is None:
+                return None
+            box, mask = region
+            return box, mask & ~taken[box]
+
+        return made
 
     new_masks: dict[Segment, object] = {}
     grid_of_masks = None
@@ -217,7 +251,8 @@ def update_segmentation(
             if grid_of_masks is None:
                 grid_of_masks = image
             _check_same_grid(image, grid_of_masks)
-            new_masks[Segment(segment.label, instance=segment.instance, rater=segment.rater)] = sitk.GetArrayFromImage(image) != 0
+            new_masks[Segment(segment.label, instance=segment.instance, rater=segment.rater)] = full_region(
+                sitk.GetArrayViewFromImage(image))
 
     segmentation_path = layout.data_file(folder, "segmentation", number)
     if segmentation_path.is_file():
@@ -239,25 +274,25 @@ def update_segmentation(
     added = _new_origins(added_names, origin, "segmentation")
 
     # every segment of the removed and the replaced labels goes
-    kept = {s: mask for s, mask in old_masks.items() if s.label.name not in remove | added_names}
+    kept = {s: make for s, make in old_masks.items() if s.label.name not in remove | added_names}
     if overlap == "replace" and new_masks:
-        taken = np.logical_or.reduce(list(new_masks.values()))
-        kept = {s: mask & ~taken for s, mask in kept.items()}
+        taken = union(new_masks)
+        kept = {s: without(make, taken) for s, make in kept.items()}
     elif overlap == "keep" and kept:
-        taken = np.logical_or.reduce(list(kept.values()))
-        new_masks = {s: mask & ~taken for s, mask in new_masks.items()}
-    everything = {s: mask for s, mask in {**kept, **new_masks}.items() if mask.any()}
+        taken = union(kept)
+        new_masks = {s: without(make, taken) for s, make in new_masks.items()}
 
-    if everything:
+    present = []
+    if kept or new_masks:
         temporary = folder / f".{os.getpid()}.tmp{SEGMENTATION_SUFFIX}"
         try:
-            present = write_segmentation(everything, grid, temporary)
-            os.replace(temporary, segmentation_path)
+            present = write_regions({**kept, **new_masks}, grid, temporary)
+            if present:
+                os.replace(temporary, segmentation_path)
         finally:
             temporary.unlink(missing_ok=True)
-    else:
+    if not present:
         segmentation_path.unlink(missing_ok=True)
-        present = []
     return _record(scan, folder, "segmentation", number, info, present, added)
 
 

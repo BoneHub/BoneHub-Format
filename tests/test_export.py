@@ -1,5 +1,6 @@
 import shutil
 import tempfile
+import tracemalloc
 import unittest
 from pathlib import Path
 
@@ -8,7 +9,7 @@ import numpy as np
 import SimpleITK as sitk
 
 from bonehub_format import LabelMap as LM
-from bonehub_format import read_label_mask, read_segmentation
+from bonehub_format import Segment, read_label_mask, read_segmentation, write_segmentation
 from bonehub_format.export import Instance, compact_image, export_nii_segmentation, mapped_labels, read_image
 
 
@@ -122,6 +123,43 @@ class TestExportNiiSegmentation(unittest.TestCase):
         self.assertTrue(np.array_equal(self.region(out, "MUSCLES"), (composition == 1) | (muscles == 3)))
         self.assertTrue(np.array_equal(self.region(out, "SUBCUTANEOUS_ADIPOSE_TISSUE"), composition == 2))
         self.assertTrue(np.array_equal(self.region(out, "GLUTEUS_MAXIMUS_LEFT"), muscles == 3))
+
+    def test_the_export_lays_out_a_file_as_write_segmentation_does(self):
+        composition, muscles = np.zeros((4, 8, 8), dtype=np.uint8), np.zeros((4, 8, 8), dtype=np.uint8)
+        composition[:, :3], composition[:, 3:] = 1, 2
+        muscles[:, 2:4], muscles[0, 6:8] = 3, 4  # two fragments of a broken bone as instances, for good measure
+        out = self.tmp / "exported.seg.nrrd"
+        export_nii_segmentation(
+            [self.write("composition", composition), self.write("muscles", muscles)], out,
+            [{1: LM.MUSCLES, 2: LM.SUBCUTANEOUS_ADIPOSE_TISSUE},
+             {3: [LM.GLUTEUS_MAXIMUS_LEFT, LM.MUSCLES], 4: [Instance(LM.FEMUR_LEFT, 2)]}])
+        layers, exported = read_segmentation(out)
+        masks = {Segment(s.label, instance=s.instance): self.region(out, s.label, s.instance) for s in exported}
+        again = self.tmp / "written.seg.nrrd"
+        write_segmentation(masks, layers[0], again)
+        _, written = read_segmentation(again)
+        self.assertEqual(exported, written)
+        self.assertEqual([(s.label.name, s.layer, s.number) for s in exported],
+                         [("FEMUR_LEFT", 0, 1), ("MUSCLES", 0, 2), ("GLUTEUS_MAXIMUS_LEFT", 1, 1),
+                          ("SUBCUTANEOUS_ADIPOSE_TISSUE", 2, 1)])  # the fat touches the muscles and the gluteus
+
+    def test_the_export_makes_one_label_at_a_time(self):
+        # memory: the layers and one label's box, not a full mask per label
+        shape, names = (64, 128, 128), [label.name for label in LM][:120]
+        array = np.zeros(shape, dtype=np.uint8)
+        for k in range(1, len(names) + 1):
+            array[(k % 8) * 8:(k % 8) * 8 + 8, (k // 8) * 8:(k // 8) * 8 + 8, :16] = k
+        mapping = {k: [LM[name], LM.BODY] for k, name in enumerate(names, start=1)}
+        source = self.write("many", array)
+        del array
+        tracemalloc.start()
+        try:
+            export_nii_segmentation([source], self.tmp / "many.seg.nrrd", [mapping])
+            peak = tracemalloc.get_traced_memory()[1]
+        finally:
+            tracemalloc.stop()
+        self.assertLess(peak, 8 * np.prod(shape))  # a full mask per label would be 120 of them
+        self.assertEqual(len(read_segmentation(self.tmp / "many.seg.nrrd")[1]), len(names) + 1)
 
     def test_a_whole_and_its_piece_from_one_source_label(self):
         liver = np.zeros((2, 4, 4), dtype=np.uint8)

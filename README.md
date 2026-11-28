@@ -329,6 +329,10 @@ layers: the file is then 4D, its first axis the layers (`kinds: list domain doma
 overlapping segments. Several segments may share a label, told apart by their instance (`BoneHubInstance`: lesion 2,
 the second fragment of a broken bone) or rater (`BoneHubRater`).
 
+One rule lays out every file: the segments, in label map order, each go into the first layer where they overlap
+nothing, and are numbered 1, 2, ... within it. The same masks give the same file, whether a converter wrote it or
+`update_segmentation` rewrote it. Ask for a label by its name; its layer and number are details of the file.
+
 ```python
 import SimpleITK as sitk
 from bonehub_format import read_label_mask, read_segmentation  # needs the [io] extra

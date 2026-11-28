@@ -12,9 +12,10 @@ import highdicom
 import numpy as np
 import pydicom
 import SimpleITK as sitk
+from scipy import ndimage
 
 from .labelmap import LabelMap
-from .segmentation_file import Segment, segment_number_dtype, write_indexed_segmentation
+from .segmentation_file import Segment, _place_regions, _write_layers, segment_number_dtype, write_indexed_segmentation
 
 # Slices checked at a time, to limit memory.
 _CHUNK_SLICES = 32
@@ -219,8 +220,8 @@ def export_nii_segmentation(
         labels not in the mapping are left out.
 
     Nothing is overwritten: where labels overlap (two files, or a whole and its pieces), they go into separate layers of
-    the file. The labels of one file at one position of the target lists form a group, and a target from several files
-    or positions a group of its own; each group goes whole into the first layer it does not overlap.
+    the file, laid out as every segmentation file is (see write_regions). Each label's voxels are made within its
+    bounding box only, one label at a time.
     """
     if len(input_label_paths) != len(label_mappings):
         raise ValueError("The number of input label paths must match the number of label mappings.")
@@ -242,61 +243,33 @@ def export_nii_segmentation(
             image = resampler.Execute(image)
         sources.append((image, _label_array(image, input_label_path), label_mapping))
 
-    # Groups of (file, {source label: target}) parts. The source labels of one file at one position of the target
-    # lists form a group, which has no overlaps: the source labels of one file never share a voxel. A target that comes
-    # from several files or positions (a whole built from pieces in separate files) is a group of its own, its voxels
-    # the union of its parts'.
-    found = [(i, source_label, k, target) for i, (_, array, label_mapping) in enumerate(sources)
-             for source_label in sorted(_unique_labels(array) - {0})
-             for k, target in enumerate(_targets(label_mapping.get(source_label)))]
-    places: dict[tuple, set[tuple[int, int]]] = {}
-    for i, _, k, target in found:
-        places.setdefault(target, set()).add((i, k))
-    groups: dict[tuple, dict[int, dict[int, tuple]]] = {}
-    for i, source_label, k, target in found:
-        group = ("file", i, k) if len(places[target]) == 1 else ("target", target)
-        groups.setdefault(group, {}).setdefault(i, {})[source_label] = target
+    # The parts of each target segment (per file, the source labels that make it), and the bounding box of every
+    # source label, found in one pass over each file.
+    parts: dict[Segment, dict[int, list[int]]] = {}
+    boxes: list[list] = []
+    for i, (_, array, label_mapping) in enumerate(sources):
+        boxes.append(ndimage.find_objects(array))
+        for source_label, box in enumerate(boxes[i], start=1):
+            if box is not None:
+                for label, instance in _targets(label_mapping.get(source_label)):
+                    parts.setdefault(Segment(label, instance=instance), {}).setdefault(i, []).append(source_label)
 
-    def mask_of(parts: dict[int, dict[int, tuple]]):
-        mask = None
-        for i, mapping in parts.items():
-            part = np.isin(sources[i][1], list(mapping))
-            mask = part if mask is None else mask | part
-        return mask
+    def region(by_file: dict[int, list[int]]):
+        def make():
+            found = [boxes[i][source_label - 1] for i, source_labels in by_file.items() for source_label in source_labels]
+            box = tuple(slice(min(b[a].start for b in found), max(b[a].stop for b in found)) for a in range(3))
+            mask = None
+            for i, source_labels in by_file.items():
+                part = np.isin(sources[i][1][box], source_labels)
+                mask = part if mask is None else mask | part
+            return box, mask
 
-    # Each group into the first layer it does not overlap.
-    occupied: list = []  # per layer, the voxels taken
-    layer_of: dict[tuple, int] = {}
-    for group, parts in groups.items():
-        mask = mask_of(parts)
-        layer = next((n for n, taken in enumerate(occupied) if not (taken & mask).any()), len(occupied))
-        if layer == len(occupied):
-            occupied.append(np.zeros(mask.shape, dtype=bool))
-        occupied[layer] |= mask
-        layer_of[group] = layer
-    del occupied
+        return make
 
-    # Number the segments of each layer in label map order, and write each group's voxels into its layer.
-    segments, number_of, layers = [], {}, []
-    for layer in sorted(set(layer_of.values())):
-        parts = [(i, mapping) for group, by_file in groups.items() if layer_of[group] == layer for i, mapping in by_file.items()]
-        targets = sorted({t for _, mapping in parts for t in mapping.values()}, key=lambda t: (_LABEL_ORDER[t[0]], t[1] or 0))
-        for number, (label, instance) in enumerate(targets, start=1):
-            number_of[(label, instance)] = number
-            segments.append(Segment(label, layer, number, instance))
-        numbers = np.zeros(sources[0][1].shape, dtype=segment_number_dtype(len(targets)))
-        for i, mapping in parts:
-            array = sources[i][1]
-            lookup = np.zeros(max(int(array.max()), max(mapping)) + 1, dtype=numbers.dtype)
-            for source_label, target in mapping.items():
-                lookup[source_label] = number_of[target]
-            mapped = lookup[array]
-            np.copyto(numbers, mapped, where=mapped != 0)
-            del mapped
-        layers.append(numbers)
-    if not layers:
-        layers = [np.zeros(sources[0][1].shape, dtype=np.uint8)]
-    return write_indexed_segmentation(layers, segments, ref_image, output_label_path)
+    regions = {segment: region(by_file) for segment, by_file in parts.items()}
+    layers, segments = _place_regions(regions, tuple(reversed(ref_image.GetSize())))
+    del regions, sources, image  # the source files are not needed to write the layers
+    return _write_layers(layers, segments, ref_image, output_label_path)
 
 
 def _label_array(image: sitk.Image, path: Path) -> np.ndarray:
@@ -307,11 +280,6 @@ def _label_array(image: sitk.Image, path: Path) -> np.ndarray:
     if array.min() < 0:
         raise ValueError(f"Negative label values in '{path}'.")
     return array
-
-
-def _unique_labels(array: np.ndarray, slices: int = 32) -> set[int]:
-    """Distinct values in a large array, computed a block of slices at a time."""
-    return {int(v) for z in range(0, array.shape[0], slices) for v in np.unique(array[z : z + slices])}
 
 
 def _read_dicom_seg(path: Path) -> tuple[sitk.Image, dict]:

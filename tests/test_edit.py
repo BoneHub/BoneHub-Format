@@ -1,8 +1,10 @@
 import json
 import shutil
 import tempfile
+import tracemalloc
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import numpy as np
 import SimpleITK as sitk
@@ -103,6 +105,36 @@ class TestEditInPlace(unittest.TestCase):
         self.assertFalse(layout.data_file(self.scan.path, "segmentation", 1).exists())
         self.assertIsNone(self.origins("segmentation"))
         self.assertEqual(validate(self.root), [])
+
+    def test_an_edit_makes_one_label_at_a_time(self):
+        # memory: the layers and one label's box, not a full mask per label (a CADS file has 165 labels)
+        shape = (64, 128, 128)
+        with mock.patch.object(support, "SHAPE", shape):
+            source = support.make_source(self.tmp / "big-source", {"p1": ["ct"]})
+            support.SyntheticConverter(source).export_to_bonehub_format(self.tmp / "big", 1, num_workers=1, verbose=False)
+        scan = Database(self.tmp / "big").dataset(1).subject(1).scan(1)
+        reference = sitk.ReadImage(str(scan.image_path))
+        names = [label.name for label in LM if not label.name.startswith("FEMUR")][:100]
+        masks = {}
+        for k, name in enumerate(names + ["BODY"]):
+            array = np.zeros(shape, dtype=np.uint8)
+            array[(k % 8) * 8:(k % 8) * 8 + 8, (k // 8) * 8:(k // 8) * 8 + 8, 100:116] = 1
+            if name == "BODY":
+                array[:] = 1  # over every other label: a layer of its own
+            masks[name] = sitk.GetImageFromArray(array)
+            masks[name].CopyInformation(reference)
+        del array
+        tracemalloc.start()
+        try:
+            update_segmentation(scan, masks, "manual", number=1)
+            update_segmentation(scan, remove=[names[0]], number=1)  # every label read back and written again
+            peak = tracemalloc.get_traced_memory()[1]
+        finally:
+            tracemalloc.stop()
+        self.assertLess(peak, 8 * np.prod(shape))  # a full mask per label would be 103 of them
+        self.assertEqual(len(scan.labels("segmentation")), 2 + 100 + 1 - 1)
+        _, segments = read_segmentation(layout.data_file(scan.path, "segmentation", 1))
+        self.assertEqual({s.layer for s in segments if s.label.name == "BODY"}, {1})
 
     def test_bad_input_changes_nothing(self):
         before = layout.data_file(self.scan.path, "segmentation", 1).read_bytes()

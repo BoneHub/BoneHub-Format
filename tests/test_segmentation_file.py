@@ -80,6 +80,25 @@ class TestSegmentationFile(unittest.TestCase):
             mask = self.sitk.GetArrayFromImage(read_label_mask(path, name)).astype(bool)
             self.assertTrue(self.np.array_equal(mask, expected), name)
 
+    def test_the_layout_follows_the_label_map_order(self):
+        # each label, in label map order, into the first layer where it overlaps nothing, numbered within the layer
+        np = self.np
+        femur, muscles, gluteus, fat = (np.zeros((4, 8, 8), dtype=bool) for _ in range(4))
+        femur[:, 6:], muscles[:, :4], gluteus[:, 2:4], fat[:, 4:6] = True, True, True, True  # the gluteus in the muscles
+        masks = {"SUBCUTANEOUS_ADIPOSE_TISSUE": fat, "GLUTEUS_MAXIMUS_LEFT": gluteus, "MUSCLES": muscles, "FEMUR_LEFT": femur}
+        layouts = []
+        for names in (list(masks), list(reversed(masks))):
+            path = self.tmp / f"order-{len(layouts)}.seg.nrrd"
+            write_segmentation({name: masks[name] for name in names}, self.reference, path)
+            layouts.append([(s.label.name, s.layer, s.number) for s in read_segmentation(path)[1]])
+        self.assertEqual(layouts[0], layouts[1])  # not the order the masks are given in
+        self.assertEqual(layouts[0], [("FEMUR_LEFT", 0, 1), ("MUSCLES", 0, 2), ("GLUTEUS_MAXIMUS_LEFT", 1, 1),
+                                      ("SUBCUTANEOUS_ADIPOSE_TISSUE", 0, 3)])
+
+    def test_a_mask_off_the_grid_is_refused(self):
+        with self.assertRaises(ValueError):
+            write_segmentation({"FEMUR_LEFT": self.np.ones((4, 8, 7), dtype=bool)}, self.reference, self.tmp / "x.seg.nrrd")
+
     def test_instances_and_raters_of_one_label(self):
         first, second = self.np.zeros((4, 8, 8), dtype=bool), self.np.zeros((4, 8, 8), dtype=bool)
         first[0], second[2] = True, True
