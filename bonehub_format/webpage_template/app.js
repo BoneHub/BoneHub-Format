@@ -88,30 +88,14 @@ function labelsMatching(query) {
     return LABELS.map((_, i) => i).filter((i) => words.every((word) => SEARCH_TEXT[i].includes(word)));
 }
 
-/** The parts of a label value (labelmap.py, R S M M part tissue side): structure RSMM, part, tissue, side. */
-function codes(value) {
-    return { structure: Math.floor(value / 1e5), part: Math.floor(value / 1000) % 100, tissue: Math.floor(value / 10) % 100, side: value % 10 };
-}
+const coversLabel = makeCovers(site.labelmap);
 
-/** The labels a label covers in the label map: itself and every label under it. A structure without a side covers
- * both sides; a group (e.g. Ribs) covers its members (Rib 1 .. Rib 12), a region (e.g. Lower extremity) its bones;
- * a part (Femur, proximal) or tissue (cortical) covers only that part or tissue. */
+/** The labels a label covers in the label map: itself and every label under it (labelmap.js). A structure without a
+ * side covers both sides; a group (e.g. Ribs) covers its members; a structure covers its parts, tissues and the findings
+ * in it; an aggregate (e.g. Skull without mandible) covers its members. */
 function labelsCovered(index) {
-    const chosen = site.labels[index].value;
-    if (chosen == null) return [index];
-    const c = codes(chosen);
-    const region = Math.floor(c.structure / 1000), family = Math.floor(c.structure / 100) % 10, member = c.structure % 100;
-    return site.labels
-        .map((label, i) => [i, label.value == null ? null : codes(label.value)])
-        .filter(([, o]) => {
-            if (o === null) return false;
-            let sameStructure;
-            if (member === 0 && family === 0) sameStructure = Math.floor(o.structure / 1000) === region && Math.floor(o.structure / 100) % 10 <= 6;
-            else if (member === 0) sameStructure = Math.floor(o.structure / 100) === Math.floor(c.structure / 100);
-            else sameStructure = o.structure === c.structure;
-            return sameStructure && (!c.side || o.side === c.side) && (!c.part || o.part === c.part) && (!c.tissue || o.tissue === c.tissue);
-        })
-        .map(([i]) => i);
+    const chosen = site.labels[index].name;
+    return site.labels.map((label, i) => [i, label.name]).filter(([, name]) => coversLabel(chosen, name)).map(([i]) => i);
 }
 
 function subjectFacts(scan) {

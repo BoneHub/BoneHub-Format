@@ -17,7 +17,22 @@ from . import layout
 from ._version import SCHEMA_VERSION, __version__, is_compatible_schema_version
 from .archive import pack, pack_scan, unpack, unpack_scan
 from .edit import update_model_files, update_segmentation
-from .labelmap import LabelMap, bonehub_to_snomed, family_of, kind_of, part_of, side_of, structure_of, tissue_of
+from .labelmap import (
+    LabelMap,
+    category_of,
+    covers,
+    is_aggregate,
+    kind_of,
+    label_for,
+    labels_covered,
+    members_of,
+    node_of,
+    parent_of,
+    part_of,
+    section_of,
+    side_of,
+    tissue_of,
+)
 from .licenses import LICENSE_KINDS, LICENSES, RESTRICTED, check_license, is_publishable, is_restricted
 from .metadata import (
     LABEL_KINDS,
@@ -38,6 +53,8 @@ from .reader import Database, DataFile, Dataset, Scan, Subject
 from .registry import REGISTRY_URL, load_registry, registry_entry_url
 from .segmentation_file import (
     SEGMENTATION_SUFFIX,
+    Segment,
+    read_label_mask,
     read_segmentation,
     read_segmentation_header,
     read_segmentation_labels,
@@ -54,13 +71,19 @@ __all__ = [
     "is_compatible_schema_version",
     "layout",
     "LabelMap",
-    "bonehub_to_snomed",
-    "structure_of",
+    "node_of",
     "part_of",
     "tissue_of",
     "side_of",
-    "family_of",
     "kind_of",
+    "category_of",
+    "section_of",
+    "parent_of",
+    "is_aggregate",
+    "members_of",
+    "covers",
+    "labels_covered",
+    "label_for",
     "LICENSES",
     "RESTRICTED",
     "check_license",
@@ -86,6 +109,8 @@ __all__ = [
     "Scan",
     "DataFile",
     "SEGMENTATION_SUFFIX",
+    "Segment",
+    "read_label_mask",
     "read_segmentation",
     "read_segmentation_header",
     "read_segmentation_labels",

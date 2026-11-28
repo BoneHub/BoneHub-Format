@@ -1,51 +1,54 @@
-"""The part of the body each label belongs to, as the database's webpage groups its structures.
+"""The sections of the database's webpage, and what the page needs to tell which labels a label covers.
 
-A label's section follows from its structure code (labelmap.py, R S M M): the bones of each region (S 0 to 6), and,
-across regions, cartilage (S 7), ligaments (S 8) and muscles (S 9). Region 9 holds the whole skeleton and the body
-composition classes.
+A label's section (labelmap.section_of): bones by body region, every other kind of structure by its kind, and findings
+and devices in sections of their own.
 
     section_of(LabelMap.FEMUR_LEFT)    'Leg'
-    structures_data()                  the sections in display order, the section and the value of every label
+    structures_data()                  the sections in display order, each label's section, and the label map's tree
+                                       for the page's covers() (webpage_template/app.js)
 """
 
 from __future__ import annotations
 
-from .labelmap import LabelMap, structure_of
+from . import labelmap
+from .labelmap import TABLES, LabelMap
 
 #: The sections in the order the webpage shows them.
 SECTIONS: tuple[str, ...] = (
-    "Head",
-    "Spine",
-    "Thorax",
-    "Shoulder and arm",
-    "Hand",
-    "Pelvis",
-    "Leg",
-    "Foot",
+    *TABLES.spec.BONE_SECTIONS.values(),
     "Whole skeleton",
-    "Muscles",
-    "Cartilage",
-    "Ligaments",
-    "Body composition",
+    *dict.fromkeys(section for _, section in TABLES.spec.KINDS.values() if section),
+    "Findings",
+    "Devices",
 )
-_REGIONS = {1: "Head", 2: "Spine", 3: "Thorax", 4: "Shoulder and arm", 5: "Hand", 6: "Pelvis", 7: "Leg", 8: "Foot"}
-_ACROSS = {7: "Cartilage", 8: "Ligaments", 9: "Muscles"}
 
 
 def section_of(label: LabelMap) -> str:
-    """The section of the webpage a label belongs to."""
-    structure = structure_of(label.value)
-    region, kind = structure // 1000, (structure // 100) % 10
-    if region == 9:
-        return "Body composition" if kind in (1, 2, 3) else "Whole skeleton"
-    return _ACROSS.get(kind) or _REGIONS[region]
+    """The section of the database's webpage a label belongs to."""
+    return labelmap.section_of(label)
 
 
 def structures_data() -> dict:
-    """The sections in display order, the index of the section of every label, and every label's value (which says
-    its structure, part, tissue and side, see labelmap.py)."""
+    """The sections in display order, the section of every label, and what the page's covers() needs: each label's
+    node, part, tissue and side, and each node's parent, extra parents, members (aggregates), the part of its parent it
+    lies in and its narrower parts, with the broader tissues of each tissue."""
     return {
         "sections": list(SECTIONS),
-        "labels": {label.name: SECTIONS.index(section_of(label)) for label in LabelMap if label.value},
-        "values": {label.name: label.value for label in LabelMap if label.value},
+        "labels": {label.name: SECTIONS.index(section_of(label)) for label in LabelMap},
+        "fields": {name: [l.node, l.part, l.tissue, l.side] for name, l in TABLES.labels.items()},
+        "nodes": {
+            name: {
+                k: v
+                for k, v in (
+                    ("parent", node.parent),
+                    ("alsoUnder", list(node.spec.also_under)),
+                    ("members", list(node.spec.members) if node.spec.members is not None else None),
+                    ("inPart", node.spec.in_part),
+                    ("partBroader", {p: list(q) for p, q in TABLES.part_broader[name].items()}),
+                )
+                if v
+            }
+            for name, node in TABLES.nodes.items()
+        },
+        "tissueBroader": {tissue: list(broader) for tissue, (_, broader) in TABLES.tissues.items() if broader},
     }

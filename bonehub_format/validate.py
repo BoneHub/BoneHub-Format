@@ -20,7 +20,8 @@ from ._version import SCHEMA_VERSION, is_compatible_schema_version
 from .archive import model_folder_files, zip_is_current
 from .metadata import DatasetInfo, FileInfo, LabeledFileInfo, ScanInfo, SubjectInfo, file_license
 from .registry import as_registry
-from .segmentation_file import read_segmentation_labels
+from .labelmap import LabelMap
+from .segmentation_file import read_segmentation_header, read_segmentation_labels
 
 _INDEX_FILES = ("datasets.parquet", "sources.parquet", "scans.parquet", "files.parquet", "labels.parquet")
 #: Subjects checked at once: the time is spent waiting for the disk, often a network share, not computing.
@@ -193,13 +194,49 @@ class _Checker:
     def _check_segmentation(self, path: Path, expected: set[str]) -> None:
         try:
             found = set(read_segmentation_labels(path))
+            fields, pairs = read_segmentation_header(path)
         except (ValueError, OSError) as e:
             self.problems.append(f"{path}: {e}")
             return
+        self.problems += [f"{path}: {problem}" for problem in _segment_problems(fields, pairs)]
         if not found:
             self.problems.append(f"{path}: holds no labels.")
         elif found != expected:
             self.problems.append(f"{path}: holds {sorted(found)}, but its JSON file lists {sorted(expected)}.")
+
+
+def _segment_problems(fields: dict[str, str], pairs: dict[str, str]) -> list[str]:
+    """What is wrong with the segments of a segmentation header: names that are no labels, layers the file lacks, a
+    number used twice in a layer, a label with two segments that no instance or rater tells apart."""
+    problems = []
+    sizes = fields.get("sizes", "").split()
+    layers = int(sizes[0]) if len(sizes) == 4 else 1
+    places, keys, untagged = set(), set(), set()
+    i = 0
+    while f"Segment{i}_Name" in pairs:
+        name = pairs[f"Segment{i}_Name"]
+        tags = dict(t.split(":", 1) for t in pairs.get(f"Segment{i}_Tags", "").split("|") if ":" in t)
+        if name not in LabelMap.__members__:
+            problems.append(f"segment '{name}' is not a label of the label map")
+        if tags.get("BoneHubLabel", name) != name:
+            problems.append(f"segment '{name}' is tagged as {tags['BoneHubLabel']}")
+        layer, number = int(pairs.get(f"Segment{i}_Layer", 0)), pairs.get(f"Segment{i}_LabelValue")
+        if not 0 <= layer < layers:
+            problems.append(f"segment '{name}' lies in layer {layer}, but the file has {layers}")
+        if (layer, number) in places:
+            problems.append(f"segment number {number} is used twice in layer {layer}")
+        places.add((layer, number))
+        key = (name, tags.get("BoneHubInstance"), tags.get("BoneHubRater"))
+        if key in keys:
+            problems.append(f"label {name} has two segments that no instance or rater tells apart")
+        keys.add(key)
+        if key[1] is None:
+            untagged.add((name, key[2]))
+        i += 1
+    for name, rater in untagged:
+        if sum(1 for k in keys if (k[0], k[2]) == (name, rater)) > 1:
+            problems.append(f"label {name} has segments with and without an instance number")
+    return problems
 
 
 def _check_index(root: Path, problems: list[str]) -> None:

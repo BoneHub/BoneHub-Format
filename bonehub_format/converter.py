@@ -59,7 +59,7 @@ from ._version import SCHEMA_VERSION, is_compatible_schema_version
 from .archive import model_folder_files, pack_scan
 from .export import export_image as export_image_file
 from .metadata import DatasetInfo, FileInfo, LabeledFileInfo, Licenses, ScanInfo, SourceInfo, SubjectInfo, check_origin
-from .segmentation_file import read_segment_numbers, read_segmentation_labels, write_indexed_segmentation
+from .segmentation_file import read_segmentation, read_segmentation_labels, write_indexed_segmentation
 
 # Each worker process holds whole volumes in memory, so keep the default modest.
 DEFAULT_MAX_WORKERS = 8
@@ -302,21 +302,22 @@ def _align_to_image(scan_path: Path) -> None:
         if np.abs(voxel_map - np.column_stack([np.eye(3), np.zeros(3)])).max() < 1e-3:
             continue  # the same grid, to within 1/1000 of a voxel
         size, spacing, origin, direction = image_grid
-        numbers, value_of = read_segment_numbers(path)
-        aligned = sitk.Resample(
-            numbers,
-            [int(v) for v in size],
-            sitk.Transform(),
-            sitk.sitkNearestNeighbor,
-            origin.tolist(),
-            spacing.tolist(),
-            direction.ravel().tolist(),
-            0,
-            numbers.GetPixelID(),
-        )
-        # numbers without a segment in the header are absent from the mask: a placeholder keeps the others in place
-        bonehub_values = [value_of.get(number, -number) for number in range(1, max(value_of, default=0) + 1)]
-        write_indexed_segmentation(sitk.GetArrayViewFromImage(aligned), bonehub_values, aligned, path)
+        layers, segments = read_segmentation(path)
+        aligned = [
+            sitk.Resample(
+                numbers,
+                [int(v) for v in size],
+                sitk.Transform(),
+                sitk.sitkNearestNeighbor,
+                origin.tolist(),
+                spacing.tolist(),
+                direction.ravel().tolist(),
+                0,
+                numbers.GetPixelID(),
+            )
+            for numbers in layers
+        ]
+        write_indexed_segmentation([sitk.GetArrayViewFromImage(a) for a in aligned], segments, aligned[0], path)
 
 
 def _exit_when_parent_dies() -> None:

@@ -33,13 +33,13 @@ from .licenses import LICENSE_KINDS, check_license
 #: The kinds of per-label data a scan can hold: each file of these kinds maps its labels to their origin.
 LABEL_KINDS: tuple[str, ...] = LABELED_KINDS
 
-_LABEL_ORDER = {label.name: i for i, label in enumerate(LabelMap) if label.value}
+_LABEL_ORDER = {label.name: i for i, label in enumerate(LabelMap)}
 _ORIGIN = re.compile(r"source|manual|(model|derived):[^\s@:]+@[^\s@]+")
 _SCAN_DIR = re.compile(r"scan-\d{2}")
 
 
 def check_label(label: str) -> str:
-    """Return `label` if it is a LabelMap name (other than BACKGROUND), else raise ValueError."""
+    """Return `label` if it is a LabelMap name, else raise ValueError."""
     if label not in _LABEL_ORDER:
         raise ValueError(f"Invalid label: {label}. Refer to 'bonehub_format/labelmap.py' to see valid labels.")
     return label

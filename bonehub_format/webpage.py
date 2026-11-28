@@ -28,6 +28,7 @@ TEMPLATE_FOLDER = "webpage_template"  # in the package
 TEMPLATE_FILES = (
     "index.html",
     "app.js",
+    "labelmap.js",
     "styles.css",
     "logo.png",
     ".nojekyll",

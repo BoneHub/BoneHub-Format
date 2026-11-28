@@ -1,8 +1,8 @@
 # BoneHub-Format
 
-The BoneHub format is a folder structure for harmonized databases of 3D bone data: medical images, bone
-segmentations, and the meshes and NURBS surfaces made from them, gathered from many source datasets under one label
-map. This package defines the format and provides the tools to build, check and publish databases in it:
+The BoneHub format is a folder structure for harmonized databases of 3D medical data, bones first: medical images,
+segmentations (of bones and of the rest of the body: organs, vessels, muscles, lesions, devices), and the meshes and
+NURBS surfaces made from them, gathered from many source datasets under one label map. This package defines the format and provides the tools to build, check and publish databases in it:
 
 - **schema**: the metadata files, the label map and the segmentation file format;
 - **conversion**: a base class for converting a source dataset, and helpers for images, NIfTI and DICOM segmentations;
@@ -202,9 +202,10 @@ from bonehub_format import Database, update_model_files, update_segmentation
 
 scan = Database("path/to/database").dataset(1).subject(1).scan(1)
 
-# Add or replace the labels a model segmented, in segmentation-01. The mask holds LabelMap values on the grid of the
-# scan's image; where it overlaps another label, overlap="replace" (the default) or "keep" decides which keeps the voxel.
-update_segmentation(scan, "patella_mask.nii.gz", origin="model:MyModel@1.0", number=1)
+# Add or replace the labels a model segmented, in segmentation-01: label -> its mask on the grid of the scan's image
+# (or the path of a BoneHub segmentation). Where it overlaps another label, both are kept, in separate layers;
+# overlap="replace" or "keep" gives the voxel to the new label or to the one already there.
+update_segmentation(scan, {"PATELLA_LEFT": patella_mask}, origin="model:MyModel@1.0", number=1)
 update_segmentation(scan, remove=["PATELLA_LEFT"], number=1)
 
 update_model_files(scan, "mesh", {"PATELLA_LEFT": Path("patella.stl")}, origin="derived:my-mesher@1.0", number=1)
@@ -227,7 +228,9 @@ from bonehub_format import LabelMap as LM, Licenses, ScanInfo, SourceInfo, Subje
 from bonehub_format.converter import DatasetConverter, ScanSource, SubjectSource
 from bonehub_format.export import export_nii_segmentation
 
-LABELS = {1: LM.FEMUR_LEFT.value, 2: LM.FEMUR_RIGHT.value}
+# source label -> its label; a list where the source label is part of several labels (KiTS's tumor is part of the
+# kidney: [LM.KIDNEY, LM.KIDNEY_TUMOR]), Instance(label, k) for one of several segments of a label (a lesion)
+LABELS = {1: LM.FEMUR_LEFT, 2: LM.FEMUR_RIGHT}
 
 
 def read_dataset(root: Path) -> list[SubjectSource]:
@@ -318,48 +321,57 @@ pass `--registry path/to/registry.json` to use a local copy, or `validate --regi
 
 ## Segmentation files
 
-Masks are stored as NRRD files (`segmentation-NN.nrrd`). Voxels hold per-file segment numbers (1, 2, 3 ...), and the
-header maps each number to its `LabelMap` label (`Segment<i>_Name`, `Segment<i>_LabelValue`) and records its colour
-and bounding box, in the fields 3D Slicer uses for its segmentations (load the file as a *Segmentation* in Slicer's
-Add Data dialog). In Python, `read_segmentation` returns the mask as `LabelMap` values:
+Masks are stored as NRRD files (`segmentation-NN.nrrd`), in the fields 3D Slicer uses for its segmentations (load the
+file as a *Segmentation* in Slicer's Add Data dialog). Voxels hold per-file segment numbers (1, 2, 3 ...), and the
+header gives each segment its label name (`Segment<i>_Name`, and the tag `BoneHubLabel`), its colour and its bounding
+box. Labels that overlap — a kidney and its cyst, two models' masks of one region — are kept whole in separate
+layers: the file is then 4D, its first axis the layers (`kinds: list domain domain domain`), as Slicer writes
+overlapping segments. Several segments may share a label, told apart by their instance (`BoneHubInstance`: lesion 2,
+the second fragment of a broken bone) or rater (`BoneHubRater`).
 
 ```python
-import SimpleITK as sitk, numpy as np
-from bonehub_format import LabelMap, read_segmentation  # needs the [io] extra
+import SimpleITK as sitk
+from bonehub_format import read_label_mask, read_segmentation  # needs the [io] extra
 
-mask = read_segmentation("segmentation-01.nrrd")  # SimpleITK image of LabelMap values
-arr = sitk.GetArrayViewFromImage(mask)
-print([LabelMap(v).name for v in np.unique(arr) if v])
+femur = read_label_mask("segmentation-01.nrrd", "FEMUR_LEFT")  # 0/1 uint8 image: the union of the label's segments
+layers, segments = read_segmentation("segmentation-01.nrrd")   # one image of segment numbers per layer, and
+for s in segments:                                             # each segment's label, layer, number, instance, rater
+    print(s.id, s.layer, s.number)                             # FEMUR_LEFT 0 1, KIDNEY_CYST_LEFT 1 1, LIVER_TUMOR#2 0 3
 ```
 
-The values are int32; do not cast them to float32, which cannot hold 9-digit values exactly.
+`write_segmentation({label: mask, ...}, reference_image, path)` writes one, putting overlapping masks into layers.
 `read_segmentation_labels` lists the labels of a mask from its header alone, without numpy or SimpleITK.
 
 ## Label map
 
-The label value is built from four independent fields, so a bone, a sub-part, a tissue compartment and a side each
-occupy their own digits:
+A label is a name; `LabelMap` lists them all (2,400 and more), and `LabelMap.FEMUR_LEFT.value == "FEMUR_LEFT"`. A
+name says which structure, part, tissue and side it is, always in this order:
 
 ```
-value = structure * 100000 + part * 1000 + tissue * 10 + side
+NODE[_PART][_TISSUE][_SIDE]
 
-FEMUR_PROXIMAL_CORTICAL_LEFT = 710001011  =  7100 | 01 | 01 | 1
-                                              |      |    |    +-- side       1 = left
-                                              |      |    +------- tissue    01 = cortical
-                                              |      +------------ part      01 = proximal
-                                              +------------------- structure 7100 = femur
+FEMUR_LEFT                      the left femur
+FEMUR_PROXIMAL_CORTICAL_LEFT    the cortical bone of the proximal femur, left
+VERTEBRA_L3_BODY                the body of the third lumbar vertebra
+KIDNEY_CYST_LEFT                a cyst of the left kidney (findings and devices are tissues of their structure)
+LEFT_ATRIUM_LUMEN               the blood pool of the left atrium
 ```
 
-Every value has 9 digits (4 + 2 + 2 + 1), except `BACKGROUND = 0`. Use `structure_of`, `part_of`, `tissue_of` and
-`side_of` to group labels — e.g. every left-femur label is `structure_of(v) == 7100 and side_of(v) == 1`.
+The structures form a tree with one root per kind: SKELETON, CARTILAGE, LIGAMENTS, JOINTS, MUSCLES,
+HEART_AND_PERICARDIUM, ARTERIES, VEINS, LYMPHOID_ORGANS, BRAIN, SPINAL_CORD, CEREBROSPINAL_FLUID, NERVES,
+EYE_AND_ADNEXA, EAR, RESPIRATORY_SYSTEM, DIGESTIVE_SYSTEM, URINARY_SYSTEM, GENITAL_ORGANS, ENDOCRINE_GLANDS,
+INTEGUMENT, ADIPOSE_TISSUE, BODY_CAVITIES and BODY. A name without a side is both sides together (or a structure that
+is not paired), and a label always means the whole of what its name says: the kidney with its cysts and tumors.
+Aggregates are unions with a name of their own (`RIBS`, `SKULL_WITHOUT_MANDIBLE`, `JEJUNUM_AND_ILEUM`).
 
-The structure is `R S M M`: a body region R (1 head, 2 spine and back, 3 thorax and trunk wall, 4 shoulder and arm,
-5 hand, 6 pelvis and hip, 7 leg, 8 foot, 9 whole body), a family S within it and a member MM. Families 1–6 are bones,
-7 cartilage (articular cartilage, intervertebral discs, costal cartilages), 8 ligaments and 9 muscles, so the map also
-holds the soft tissue around the bones: e.g. `RECTUS_FEMORIS_LEFT`, `INTERVERTEBRAL_DISC_L4_L5`,
-`ANTERIOR_CRUCIATE_LIGAMENT_RIGHT`. Region 9 holds the whole-body aggregates (`SKELETON`) and the body-composition
-classes (`SKELETAL_MUSCLE`, `SUBCUTANEOUS_ADIPOSE_TISSUE`, `SKIN`, ...). `kind_of(v)` says which kind a label is:
-`bone`, `cartilage`, `ligament`, `muscle` or `tissue`. The docstring of `LabelMap` has the full rules.
+`node_of`, `part_of`, `tissue_of` and `side_of` take a name apart, `kind_of` and `category_of` say what it is
+(`bone`, `muscle`, `heart` ...; `tissue`, `finding` or `device`), and `covers(a, b)` says whether label `a` holds
+label `b` — `covers("RIBS", "RIB_7_LEFT")`, `covers("KIDNEY_LEFT", "KIDNEY_CYST_LEFT")`,
+`covers("FEMUR_PROXIMAL", "FEMUR_HEAD_LEFT")` — so a search for a structure finds the scans of everything in it;
+`labels_covered(a)` lists them. The tree is written by hand in `bonehub_format/labelmap_spec.py`;
+`tools/generate_labelmap.py` writes the enum (`labelmap_data.py`) and checks every rule. The label map only grows: a
+published label keeps its name and meaning, and what it covers among published labels never changes
+(`tools/generate_labelmap.py --publish` records them; the check then holds the map to them).
 
 ## Related repositories
 

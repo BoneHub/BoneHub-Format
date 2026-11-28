@@ -29,25 +29,23 @@ import sys
 import tempfile
 from pathlib import Path
 
-from bonehub_format import Database, LabeledFileInfo, LabelMap, layout, pack_scan, validate
-from bonehub_format.labelmap import structure_of
+from bonehub_format import Database, LabeledFileInfo, layout, pack_scan, section_of, validate
 
 DEFAULT_ROOT = Path("/mnt/nas/BoneHub/Harmonized_Databases/MyDatabase")
 
 CLI_COMMAND = "mesh2nurbs-rhino3d"
 DEFAULT_PREPROCESSING_STEPS = ["remove-isolated-islands"]
 
-# Quad remesh edge length (mm) per body region, the first digit of the label's structure id
-# (see LabelMap): 1 head, 2 spine, 3 thorax, 4 shoulder+arm, 5 hand, 6 pelvis, 7 leg, 8 foot.
-QUADREMESH_LENGTH_PER_REGION = {
-    1: 3.0,
-    2: 2.0,
-    3: 2.0,
-    4: 3.0,
-    5: 1.0,
-    6: 3.0,
-    7: 3.0,
-    8: 1.0,
+# Quad remesh edge length (mm) per section of the skeleton (section_of, see bonehub_format/labelmap.py)
+QUADREMESH_LENGTH_PER_SECTION = {
+    "Head": 3.0,
+    "Spine": 2.0,
+    "Thorax": 2.0,
+    "Shoulder and arm": 3.0,
+    "Hand": 1.0,
+    "Pelvis": 3.0,
+    "Leg": 3.0,
+    "Foot": 1.0,
 }
 # Bones that need a different edge length than the rest of their region
 QUADREMESH_LENGTH_PER_LABEL = {"PATELLA_LEFT": 2.0, "PATELLA_RIGHT": 2.0}
@@ -64,8 +62,7 @@ def tool_version() -> str:
 def quadremesh_length(label: str) -> float:
     if label in QUADREMESH_LENGTH_PER_LABEL:
         return QUADREMESH_LENGTH_PER_LABEL[label]
-    region = structure_of(LabelMap[label].value) // 1000
-    return QUADREMESH_LENGTH_PER_REGION.get(region, DEFAULT_QUADREMESH_LENGTH)
+    return QUADREMESH_LENGTH_PER_SECTION.get(section_of(label), DEFAULT_QUADREMESH_LENGTH)
 
 
 def build_command(input_path: Path, label: str, preprocessing_steps: list, rhino_path: str | None) -> list:

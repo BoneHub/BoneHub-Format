@@ -99,7 +99,7 @@ class TestDatabase(unittest.TestCase):
         self.assertEqual(withheld, [3, 4])
         merged = [row for row in scans if row["dataset_id"] == 2][0]
         self.assertEqual(merged["sources"], [5, 7])
-        self.assertEqual(merged["segmentation"], ["GLUTEUS_MAXIMUS_RIGHT", "FEMUR_LEFT", "FEMUR_RIGHT"])
+        self.assertEqual(merged["segmentation"], ["FEMUR_LEFT", "FEMUR_RIGHT", "GLUTEUS_MAXIMUS_RIGHT"])
 
         files = pq.read_table(paths["files"]).to_pylist()
         first_files = [(row["kind"], row["number"], row["path"], row["source"], row["published"]) for row in files if row["scan"] == first["scan"]]
@@ -201,7 +201,7 @@ class TestDatabase(unittest.TestCase):
         second = [f for f in card["files"] if f["kind"] == "segmentation" and f["number"] == 2][0]
         self.assertEqual(second["sourceScanId"], "provider-q1/ct")
         self.assertEqual({origin: [site["labels"][i]["name"] for i in labels] for origin, labels in second["origins"].items()},
-                         {"model:TestModel@2.0": ["GLUTEUS_MAXIMUS_RIGHT", "FEMUR_LEFT"]})
+                         {"model:TestModel@2.0": ["FEMUR_LEFT", "GLUTEUS_MAXIMUS_RIGHT"]})
         self.assertNotRegex((folder / "update_data.py").read_text(encoding="utf-8"), r"\{\{[A-Z_]+\}\}")  # placeholders filled in
         self.assertTrue((folder / ".nojekyll").exists() and (folder / "app.js").exists())
 

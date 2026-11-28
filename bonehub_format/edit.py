@@ -12,7 +12,7 @@ These functions keep the JSON files in step with the data files; a file left wit
 after it are numbered again. They leave dataset.json alone: when a label is now segmented in every scan of a source,
 add it to its annotated_labels yourself. Rebuild the index afterwards.
 
-    update_segmentation(scan, mask, origin="model:TotalSegmentator@2.4.0")          # a new segmentation file
+    update_segmentation(scan, {"FEMUR_LEFT": mask}, origin="model:TotalSegmentator@2.4.0")  # a new segmentation file
     update_segmentation(scan, remove=["PATELLA_LEFT"], number=2)                     # in segmentation-02.nrrd
     update_model_files(scan, "mesh", {"FEMUR_LEFT": Path("femur.stl")}, origin="derived:my-mesher@1.0", number=1)
     update_model_files(scan, "mesh", remove=["FEMUR_LEFT"], number=1)
@@ -34,7 +34,13 @@ from .archive import model_folder_files, pack_scan, unpack_scan
 from .labelmap import LabelMap
 from .metadata import DatasetInfo, LabeledFileInfo, check_label, check_origin
 from .reader import Scan
-from .segmentation_file import SEGMENTATION_SUFFIX, _io_modules, read_segmentation, write_segmentation
+from .segmentation_file import (
+    SEGMENTATION_SUFFIX,
+    Segment,
+    _io_modules,
+    read_segmentation,
+    write_segmentation,
+)
 
 if TYPE_CHECKING:
     import SimpleITK as sitk
@@ -167,70 +173,85 @@ def _check_same_grid(mask: sitk.Image, grid: sitk.Image) -> None:
 
 def update_segmentation(
     scan: Scan | Path,
-    mask: sitk.Image | Path | None = None,
+    masks: Mapping[LabelMap | str | Segment, sitk.Image] | Path | None = None,
     origin: Origin | None = None,
     remove: Iterable[str] = (),
-    overlap: Literal["replace", "keep"] = "replace",
+    overlap: Literal["layer", "replace", "keep"] = "layer",
     number: int | None = None,
     source: int | None = None,
 ) -> list[str]:
-    """Add or replace the labels of `mask` in a segmentation of the scan, and take out the labels in `remove`.
+    """Add or replace labels in a segmentation of the scan, and take out the labels in `remove`.
 
-    mask: LabelMap values (0 for background) on the grid of the scan's image, as a SimpleITK image or the path of
-        a file SimpleITK reads (a BoneHub .nrrd segmentation is read with read_segmentation). Each label it holds
-        replaces that label.
-    origin: where the labels of the mask come from (see check_origin), one for all or one per label.
+    masks: label (or Segment, for an instance or a rater) -> its region, a SimpleITK image on the grid of the scan's
+        image (non-zero voxels are the label's); or the path of a BoneHub segmentation file, whose segments are all
+        added. A label added replaces that label, all its segments included.
+    origin: where the added labels come from (see check_origin), one for all or one per label.
     remove: labels to take out.
-    overlap: where a label of the mask covers a voxel of another label, 'replace' gives the voxel to the mask's label
-        and 'keep' leaves it to the label already there.
+    overlap: where an added label covers a voxel of another label: 'layer' keeps both (overlapping segments go into
+        separate layers); 'replace' gives the voxel to the new label; 'keep' leaves it to the label already there.
     number: the segmentation that is changed (segmentation-<number>.nrrd); a new one by default.
     source: the BoneHub ID of the source of a new segmentation; the dataset's first source by default.
-    Returns the labels of the segmentation afterwards. A segmentation left without labels is deleted.
+    Returns the labels of the segmentation afterwards. A segmentation left without labels is deleted. The file is
+    written again with its segments in the fewest layers.
     """
     np, sitk = _io_modules()
     folder = _scan_folder(scan)
     number, info = _file(folder, "segmentation", number, source)
     remove = {check_label(label) for label in remove}
-    if overlap not in ("replace", "keep"):
-        raise ValueError(f"overlap is 'replace' or 'keep', not {overlap!r}.")
+    if overlap not in ("layer", "replace", "keep"):
+        raise ValueError(f"overlap is 'layer', 'replace' or 'keep', not {overlap!r}.")
 
-    if mask is not None and not hasattr(mask, "GetSize"):
-        path = Path(mask)
-        mask = read_segmentation(path) if path.name.endswith(SEGMENTATION_SUFFIX) else sitk.ReadImage(str(path))
+    def regions(layer_images, segments):
+        arrays = [sitk.GetArrayFromImage(image) for image in layer_images]
+        return {Segment(s.label, instance=s.instance, rater=s.rater): arrays[s.layer] == s.number for s in segments}
+
+    new_masks: dict[Segment, object] = {}
+    grid_of_masks = None
+    if masks is not None and not isinstance(masks, Mapping):
+        layer_images, file_segments = read_segmentation(Path(masks))
+        grid_of_masks = layer_images[0]
+        new_masks = regions(layer_images, file_segments)
+    elif masks:
+        for key, image in masks.items():
+            segment = key if isinstance(key, Segment) else Segment(check_label(key.name if isinstance(key, LabelMap) else key))
+            if grid_of_masks is None:
+                grid_of_masks = image
+            _check_same_grid(image, grid_of_masks)
+            new_masks[Segment(segment.label, instance=segment.instance, rater=segment.rater)] = sitk.GetArrayFromImage(image) != 0
+
     segmentation_path = layout.data_file(folder, "segmentation", number)
     if segmentation_path.is_file():
-        current_image = read_segmentation(segmentation_path)
+        layer_images, segments = read_segmentation(segmentation_path)
+        grid = layer_images[0]
+        old_masks = regions(layer_images, segments)
     else:
-        current_image = _grid(folder, mask)
-        if current_image is None:
+        grid = _grid(folder, grid_of_masks)
+        if grid is None:
             return []  # nothing to remove from, nothing to add
-    current = sitk.GetArrayFromImage(current_image).astype(np.int64)
+        old_masks = {}
+    if grid_of_masks is not None:
+        _check_same_grid(grid_of_masks, grid)
 
-    new = None
-    added: dict[str, str] = {}
-    if mask is not None:
-        _check_same_grid(mask, current_image)
-        new = sitk.GetArrayFromImage(mask).astype(np.int64)
-        values = [int(v) for v in np.unique(new) if v != 0]
-        try:
-            new_labels = {LabelMap(value).name for value in values}
-        except ValueError as e:
-            raise ValueError(f"The mask holds a value that is not a LabelMap label: {e}") from e
-        both = sorted(new_labels & remove)
-        if both:
-            raise ValueError(f"{both} are both added and removed.")
-        added = _new_origins(new_labels, origin, "segmentation")
+    added_names = {segment.label.name for segment in new_masks}
+    both = sorted(added_names & remove)
+    if both:
+        raise ValueError(f"{both} are both added and removed.")
+    added = _new_origins(added_names, origin, "segmentation")
 
-    for label in remove | set(added):
-        current[current == LabelMap[label].value] = 0
-    if new is not None:
-        take = new != 0 if overlap == "replace" else (new != 0) & (current == 0)
-        current[take] = new[take]
+    # every segment of the removed and the replaced labels goes
+    kept = {s: mask for s, mask in old_masks.items() if s.label.name not in remove | added_names}
+    if overlap == "replace" and new_masks:
+        taken = np.logical_or.reduce(list(new_masks.values()))
+        kept = {s: mask & ~taken for s, mask in kept.items()}
+    elif overlap == "keep" and kept:
+        taken = np.logical_or.reduce(list(kept.values()))
+        new_masks = {s: mask & ~taken for s, mask in new_masks.items()}
+    everything = {s: mask for s, mask in {**kept, **new_masks}.items() if mask.any()}
 
-    if current.any():
+    if everything:
         temporary = folder / f".{os.getpid()}.tmp{SEGMENTATION_SUFFIX}"
         try:
-            present = write_segmentation(current, current_image, temporary)
+            present = write_segmentation(everything, grid, temporary)
             os.replace(temporary, segmentation_path)
         finally:
             temporary.unlink(missing_ok=True)

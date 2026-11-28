@@ -5,6 +5,7 @@ Requires the converter extra: pip install "bonehub-format[converter]".
 
 import os
 import re
+from dataclasses import dataclass
 from pathlib import Path
 
 import highdicom
@@ -12,11 +13,13 @@ import numpy as np
 import pydicom
 import SimpleITK as sitk
 
-from .segmentation_file import segment_number_dtype, write_indexed_segmentation
+from .labelmap import LabelMap
+from .segmentation_file import Segment, segment_number_dtype, write_indexed_segmentation
 
 # Slices checked at a time, to limit memory.
 _CHUNK_SLICES = 32
 _INT16 = np.iinfo(np.int16)
+_LABEL_ORDER = {label: i for i, label in enumerate(LabelMap)}
 
 
 class ShearedImageError(ValueError):
@@ -170,17 +173,54 @@ def export_image(input_path: Path, output_path: Path, sheared: int | None = None
     write_image(read_image(input_path, sheared), output_path)
 
 
+@dataclass(frozen=True)
+class Instance:
+    """In a label mapping: a source label that is one of several segments of a label (lesion k; fragment k of a
+    broken bone, the main fragment first)."""
+
+    label: LabelMap
+    instance: int
+
+
+def _targets(target) -> list[tuple[LabelMap, int | None]]:
+    """A mapping's target (a label, an Instance, or a list of them) as (label, instance) pairs; None is left out."""
+    items = target if isinstance(target, (list, tuple)) else [target]
+    out = []
+    for item in items:
+        if isinstance(item, Instance):
+            out.append((Segment(item.label).label, int(item.instance)))
+        elif item is not None:
+            out.append((Segment(item).label, None))
+    return out
+
+
+def mapped_labels(*label_mappings: dict) -> list[str]:
+    """The names of the labels that label mappings (see export_nii_segmentation) map to, in label map order: for a
+    dataset's annotated_labels."""
+    labels = {label for mapping in label_mappings for target in mapping.values() for label, _ in _targets(target)}
+    return [label.name for label in sorted(labels, key=_LABEL_ORDER.__getitem__)]
+
+
 def export_nii_segmentation(
     input_label_paths: list[Path],
     output_label_path: Path,
     label_mappings: list[dict],
 ):
     """
-    Converts one or more NIfTI segmentation files to BoneHub standardized labels and saves the result.
-    input_label_paths: list of Paths to the original label file(s) in NIfTI format.
-    output_label_path: Path to save the combined label file; written as a BoneHub segmentation (`.nrrd`).
-    label_mappings: list of dictionaries mapping original labels to BoneHub labels.
-                    When multiple files are given, later files take priority over earlier ones in case of overlapping voxels.
+    Converts one or more label files (NIfTI, or anything SimpleITK reads) to BoneHub labels in one segmentation file.
+
+    input_label_paths: the source label files; files on another grid are resampled (nearest neighbour) onto the first.
+    output_label_path: the BoneHub segmentation (`.nrrd`) to write.
+    label_mappings: per file, source label -> its target: a LabelMap label; an Instance(label, k), when the source label
+        is one of several segments of a label (lesion k); or a list of these, when the source label's voxels belong to
+        several labels at once (to build a whole from its pieces: KiTS's tumor -> [KIDNEY, KIDNEY_TUMOR]). Source
+        labels mapped to the same target are merged into one segment, from one file or several (to build a whole from
+        pieces in separate files: TotalSegmentator's heart.nii.gz and atrial_appendage_left.nii.gz -> HEART); source
+        labels not in the mapping are left out.
+
+    Nothing is overwritten: where labels overlap (two files, or a whole and its pieces), they go into separate layers of
+    the file. The labels of one file at one position of the target lists form a group, and a target from several files
+    or positions a group of its own; each group goes whole into the first layer it does not overlap.
     """
     if len(input_label_paths) != len(label_mappings):
         raise ValueError("The number of input label paths must match the number of label mappings.")
@@ -202,29 +242,61 @@ def export_nii_segmentation(
             image = resampler.Execute(image)
         sources.append((image, _label_array(image, input_label_path), label_mapping))
 
-    # Number the BoneHub labels present 1..N and map each source label straight to its number.
-    present = set()
-    for _, array, label_mapping in sources:
-        present.update(label_mapping[v] for v in _unique_labels(array) if label_mapping.get(v))
-    bonehub_values = sorted(present)
-    number_of = {value: n for n, value in enumerate(bonehub_values, start=1)}
-    dtype = segment_number_dtype(len(bonehub_values))
+    # Groups of (file, {source label: target}) parts. The source labels of one file at one position of the target
+    # lists form a group, which has no overlaps: the source labels of one file never share a voxel. A target that comes
+    # from several files or positions (a whole built from pieces in separate files) is a group of its own, its voxels
+    # the union of its parts'.
+    found = [(i, source_label, k, target) for i, (_, array, label_mapping) in enumerate(sources)
+             for source_label in sorted(_unique_labels(array) - {0})
+             for k, target in enumerate(_targets(label_mapping.get(source_label)))]
+    places: dict[tuple, set[tuple[int, int]]] = {}
+    for i, _, k, target in found:
+        places.setdefault(target, set()).add((i, k))
+    groups: dict[tuple, dict[int, dict[int, tuple]]] = {}
+    for i, source_label, k, target in found:
+        group = ("file", i, k) if len(places[target]) == 1 else ("target", target)
+        groups.setdefault(group, {}).setdefault(i, {})[source_label] = target
 
-    numbers = None
-    for _, array, label_mapping in sources:
-        lookup = np.zeros(max(int(array.max()), max(label_mapping)) + 1, dtype=dtype)
-        for orig_label, bonehub_label in label_mapping.items():
-            if bonehub_label in number_of:
-                lookup[orig_label] = number_of[bonehub_label]
-        mapped = lookup[array]
-        # Non-zero voxels from later files overwrite earlier ones
-        if numbers is None:
-            numbers = mapped
-        else:
+    def mask_of(parts: dict[int, dict[int, tuple]]):
+        mask = None
+        for i, mapping in parts.items():
+            part = np.isin(sources[i][1], list(mapping))
+            mask = part if mask is None else mask | part
+        return mask
+
+    # Each group into the first layer it does not overlap.
+    occupied: list = []  # per layer, the voxels taken
+    layer_of: dict[tuple, int] = {}
+    for group, parts in groups.items():
+        mask = mask_of(parts)
+        layer = next((n for n, taken in enumerate(occupied) if not (taken & mask).any()), len(occupied))
+        if layer == len(occupied):
+            occupied.append(np.zeros(mask.shape, dtype=bool))
+        occupied[layer] |= mask
+        layer_of[group] = layer
+    del occupied
+
+    # Number the segments of each layer in label map order, and write each group's voxels into its layer.
+    segments, number_of, layers = [], {}, []
+    for layer in sorted(set(layer_of.values())):
+        parts = [(i, mapping) for group, by_file in groups.items() if layer_of[group] == layer for i, mapping in by_file.items()]
+        targets = sorted({t for _, mapping in parts for t in mapping.values()}, key=lambda t: (_LABEL_ORDER[t[0]], t[1] or 0))
+        for number, (label, instance) in enumerate(targets, start=1):
+            number_of[(label, instance)] = number
+            segments.append(Segment(label, layer, number, instance))
+        numbers = np.zeros(sources[0][1].shape, dtype=segment_number_dtype(len(targets)))
+        for i, mapping in parts:
+            array = sources[i][1]
+            lookup = np.zeros(max(int(array.max()), max(mapping)) + 1, dtype=numbers.dtype)
+            for source_label, target in mapping.items():
+                lookup[source_label] = number_of[target]
+            mapped = lookup[array]
             np.copyto(numbers, mapped, where=mapped != 0)
-        del mapped
-
-    return write_indexed_segmentation(numbers, bonehub_values, ref_image, output_label_path)
+            del mapped
+        layers.append(numbers)
+    if not layers:
+        layers = [np.zeros(sources[0][1].shape, dtype=np.uint8)]
+    return write_indexed_segmentation(layers, segments, ref_image, output_label_path)
 
 
 def _label_array(image: sitk.Image, path: Path) -> np.ndarray:
@@ -269,7 +341,7 @@ def export_dicom_segmentation(
     input_image_path: Path to the original DICOM image folder.
     input_label_path: Path to the original DICOM label file.
     output_label_path: Path to save the converted label file; written as a BoneHub segmentation (`.nrrd`).
-    label_mapping: Dictionary mapping original labels to BoneHub labels.
+    label_mapping: Dictionary mapping the DICOM segments' labels to BoneHub labels (LabelMap members).
     dicom_segment_key: Key to access the segment label in the DICOM segmentation file. Options: "SegmentLabel" (default) or "SegmentDescription", depending on how the original labels are stored in the DICOM file.
     """
     seg_image, segment_infos = _read_dicom_seg(input_label_path)
@@ -282,9 +354,10 @@ def export_dicom_segmentation(
         if seg_label_name is None:
             raise ValueError(f"Segment info for label {orig_label} does not contain key '{dicom_segment_key}'.")
         bonehub_of[orig_label] = label_mapping[seg_label_name]
-    bonehub_values = sorted(set(bonehub_of.values()))
-    number_of = {value: n for n, value in enumerate(bonehub_values, start=1)}
-    lookup = np.zeros(max(int(seg_array.max()), max(bonehub_of)) + 1, dtype=segment_number_dtype(len(bonehub_values)))
+    bonehub_labels = sorted({Segment(label).label for label in bonehub_of.values()}, key=_LABEL_ORDER.get)
+    number_of = {label: n for n, label in enumerate(bonehub_labels, start=1)}
+    bonehub_of = {orig: Segment(label).label for orig, label in bonehub_of.items()}
+    lookup = np.zeros(max(int(seg_array.max()), max(bonehub_of)) + 1, dtype=segment_number_dtype(len(bonehub_labels)))
     for orig_label, bonehub_label in bonehub_of.items():
         lookup[orig_label] = number_of[bonehub_label]
 
@@ -302,7 +375,7 @@ def export_dicom_segmentation(
     seg_resampled = resampler.Execute(seg_image_mapped)
 
     return write_indexed_segmentation(
-        sitk.GetArrayViewFromImage(seg_resampled), bonehub_values, seg_resampled, output_label_path
+        sitk.GetArrayViewFromImage(seg_resampled), bonehub_labels, seg_resampled, output_label_path
     )
 
 

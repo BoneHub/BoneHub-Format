@@ -97,7 +97,7 @@ class TestMergedScans(unittest.TestCase):
         self.assertEqual((second.path.name, second.source), ("segmentation-02.nrrd", support.PROVIDER_ID))
         self.assertEqual(second.info.source_scan_id, "provider-a/ct")
         self.assertEqual(second.info.labels, {"FEMUR_LEFT": "model:TestModel@2.0", "GLUTEUS_MAXIMUS_RIGHT": "model:TestModel@2.0"})
-        self.assertEqual(scan.labels("segmentation"), ["GLUTEUS_MAXIMUS_RIGHT", "FEMUR_LEFT", "FEMUR_RIGHT"])  # label map order
+        self.assertEqual(scan.labels("segmentation"), ["FEMUR_LEFT", "FEMUR_RIGHT", "GLUTEUS_MAXIMUS_RIGHT"])  # label map order
         self.assertEqual(first.labels, ["FEMUR_LEFT", "FEMUR_RIGHT"])
         self.assertEqual(scan.image.source, support.SOURCE_ID)
         self.assertEqual(scan.subject.info.sources, {support.SOURCE_ID: "a", support.PROVIDER_ID: "provider-a"})
@@ -137,7 +137,7 @@ class TestMergedScans(unittest.TestCase):
     def _assert_on_the_image_grid(self, root: Path):
         scan = Database(root).dataset(3).subject(1).scan(1)
         image = sitk.ReadImage(str(scan.path / layout.IMAGE_FILE))
-        home, provider = (read_segmentation(data.path) for data in scan.files("segmentation"))
+        (home,), (provider,) = (read_segmentation(data.path)[0] for data in scan.files("segmentation"))
         for mask in (home, provider):
             self.assertEqual(mask.GetSize(), image.GetSize())
             self.assertEqual(mask.GetOrigin(), image.GetOrigin())

@@ -90,10 +90,8 @@ def site_data(index_dir: Path) -> tuple[dict, dict[str, dict]]:
         "repo": HF_REPO_ID,
         "registry": REGISTRY_PAGE_URL,
         "sections": structures["sections"],
-        "labels": [
-            {"name": name, "section": structures["labels"].get(name, other_section), "value": structures["values"].get(name)}
-            for name in names
-        ],
+        "labels": [{"name": name, "section": structures["labels"].get(name, other_section)} for name in names],
+        "labelmap": {key: structures[key] for key in ("fields", "nodes", "tissueBroader")},
         "datasets": [
             {
                 "id": row["dataset_id"],

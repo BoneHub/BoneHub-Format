@@ -15,10 +15,10 @@ from bonehub_format.converter import Contribution, CustomDataHandlers, DatasetCo
 from bonehub_format.export import export_nii_segmentation
 
 SHAPE = (12, 16, 16)  # z, y, x
-LABEL_MAPPING = {1: LM.FEMUR_LEFT.value, 2: LM.FEMUR_RIGHT.value}
+LABEL_MAPPING = {1: LM.FEMUR_LEFT, 2: LM.FEMUR_RIGHT}
 SOURCE_ID = 3  # the synthetic source's BoneHub ID
 PROVIDER_ID = 7  # a second synthetic source, which gives every scan of the first a segmentation of its own
-PROVIDER_MAPPING = {1: LM.FEMUR_LEFT.value, 2: LM.GLUTEUS_MAXIMUS_RIGHT.value}
+PROVIDER_MAPPING = {1: LM.FEMUR_LEFT, 2: LM.GLUTEUS_MAXIMUS_RIGHT}
 FAIL_ON = "fail_me"  # a subject whose segmentation export raises
 
 

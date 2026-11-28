@@ -1,29 +1,43 @@
 """Reading and writing BoneHub segmentation masks (`.nrrd` files with 3D Slicer segment fields in their header).
 
-Voxels hold per-file segment numbers (1, 2, 3 ...; uint8, or uint16 above 255 segments), as
-in 3D Slicer's own segmentation files. The header maps each number to its LabelMap
-label and records the segment's colour and bounding box.
+Voxels hold per-file segment numbers (1, 2, 3 ...; uint8, or uint16 above 255 segments), as in 3D Slicer's own
+segmentation files; the header names the label of each number (`Segment<i>_Name`) and records the segment's colour and
+bounding box. Segments that overlap lie in separate layers of one file: the file is then 4D, its first axis (kind
+`list`) the layers, as 3D Slicer writes overlapping segments, and a segment's number is unique within its layer only.
+
+A label may have several segments in one file, told apart by their instance (lesion 1, lesion 2; the fragments of a
+broken bone, the main fragment first) or rater (the readers of a dataset with several). Together they are the label's
+region. Each segment's header tags hold BoneHubLabel and, where they apply, BoneHubInstance and BoneHubRater.
+
+    write_segmentation({LabelMap.FEMUR_LEFT: mask, ...}, reference, path)   one binary mask per label (or Segment)
+    write_indexed_segmentation(numbers, segments, reference, path)          segment numbers already in the voxels
+    read_segmentation(path)            the segment-number image of each layer, and the segments
+    read_label_mask(path, label)       one label's region as a 0/1 image
 
 Reading and writing masks requires numpy and SimpleITK: pip install "bonehub-format[io]".
-The header functions (read_segmentation_labels, read_segmentation_header) need neither.
+The header functions (read_segmentation_labels, read_segmentation_header, read_segmentation_segments) need neither.
 """
 
 from __future__ import annotations
 
 import colorsys
+import zlib
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
+from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from .labelmap import LabelMap
+from .labelmap import LabelMap, node_of, part_of, side_of, tissue_of
 from .layout import SEGMENTATION_SUFFIX
 
 if TYPE_CHECKING:
     import numpy as np
     import SimpleITK as sitk
 
-
 # Slices processed at a time when relabelling, to limit memory.
 _CHUNK_SLICES = 32
+_LABEL_ORDER = {label: i for i, label in enumerate(LabelMap)}
 
 
 def _io_modules():
@@ -38,6 +52,40 @@ def _io_modules():
     return numpy, SimpleITK
 
 
+def _label(label: LabelMap | str) -> LabelMap:
+    if isinstance(label, LabelMap):
+        return label
+    try:
+        return LabelMap[label.name if isinstance(label, Enum) else str(label)]
+    except KeyError:
+        raise ValueError(f"'{label}' is not a label of the label map (see bonehub_format/labelmap.py).") from None
+
+
+@dataclass(frozen=True)
+class Segment:
+    """One segment of a segmentation file: its label, its layer and number within the layer, and its instance and
+    rater where the file holds several segments of the label."""
+
+    label: LabelMap
+    layer: int = 0
+    number: int = 1
+    instance: int | None = None
+    rater: str | None = None
+
+    def __post_init__(self):
+        object.__setattr__(self, "label", _label(self.label))
+
+    @property
+    def id(self) -> str:
+        """The segment's ID in the file, unique within it: the label name, then #instance and @rater."""
+        return self.label.name + (f"#{self.instance}" if self.instance is not None else "") + (
+            f"@{self.rater}" if self.rater is not None else "")
+
+    @property
+    def key(self) -> tuple:
+        return (self.label, self.instance, self.rater)
+
+
 def segment_number_dtype(number_of_segments: int):
     """The smallest unsigned type that holds segment numbers 1..number_of_segments."""
     np, _ = _io_modules()
@@ -45,138 +93,195 @@ def segment_number_dtype(number_of_segments: int):
         return np.uint8
     if number_of_segments <= 65535:
         return np.uint16
-    raise ValueError(f"{number_of_segments} segments in one mask; at most 65535 are supported.")
+    raise ValueError(f"{number_of_segments} segments in one layer; at most 65535 are supported.")
 
 
-def _segment_color(value: int) -> tuple[float, float, float]:
-    """A stable colour per label: hue from the body region, shade from the finer fields."""
-    region = value // 100_000_000
-    structure = value // 100_000
-    tissue = (value // 10) % 100
-    hue = ((region / 10.0) + (structure % 100) * 0.013) % 1.0
-    saturation = 0.45 + ((structure // 100) % 5) * 0.09
-    lightness = min(0.42 + tissue * 0.09, 0.78)
+def _segment_color(label: LabelMap) -> tuple[float, float, float]:
+    """A stable colour per label: the hue from its structure, the saturation from its part and tissue, the lightness
+    from its side (left lighter, right darker), so the two sides of a structure always differ."""
+    hue = zlib.crc32(node_of(label).encode()) % 360 / 360
+    saturation = 0.45 + zlib.crc32(f"{part_of(label)}|{tissue_of(label)}".encode()) % 4 * 0.12
+    lightness = {"LEFT": 0.6, "RIGHT": 0.36}.get(side_of(label), 0.48)
     return colorsys.hls_to_rgb(hue, lightness, saturation)
 
 
-def write_segmentation(
-    array: np.ndarray,
-    reference_image: sitk.Image,
-    output_path: Path,
-) -> list[str]:
-    """Write a mask given as LabelMap values.
+def write_segmentation(masks: Mapping, reference_image: sitk.Image, output_path: Path) -> list[str]:
+    """Write a mask given as one binary array per label.
 
-    array: voxel array of LabelMap values, 0 for background.
+    masks: label (a LabelMap member or its name) or Segment (for an instance or a rater) -> a boolean voxel array on the
+        grid of reference_image. Masks that overlap go into separate layers, each into the first layer it does not
+        overlap.
     reference_image: image whose geometry (spacing, origin, direction) the mask shares.
     output_path: destination, ending in `.nrrd`.
     Returns the names of the labels present in the mask.
     """
     np, _ = _io_modules()
-    array = np.asarray(array)
-    chunks = [slice(z, z + _CHUNK_SLICES) for z in range(0, array.shape[0], _CHUNK_SLICES)]
+    items = []
+    for key, array in masks.items():
+        segment = key if isinstance(key, Segment) else Segment(key)
+        items.append((segment, np.asarray(array, dtype=bool)))
+    items.sort(key=lambda item: (_LABEL_ORDER[item[0].label], item[0].rater or "", item[0].instance or 0))
+    shape = items[0][1].shape if items else tuple(reversed(reference_image.GetSize()))
+    layers, segments = [], []
+    for segment, mask in items:
+        if not mask.any():
+            continue
+        layer = next((n for n, numbers in enumerate(layers) if not numbers[mask].any()), len(layers))
+        if layer == len(layers):
+            layers.append(np.zeros(shape, dtype=np.uint16))
+        number = 1 + sum(1 for s in segments if s.layer == layer)
+        layers[layer][mask] = number
+        segments.append(Segment(segment.label, layer, number, segment.instance, segment.rater))
+    if not layers:
+        layers = [np.zeros(shape, dtype=np.uint8)]
+    return write_indexed_segmentation(layers, segments, reference_image, output_path)
 
-    values = sorted({int(v) for c in chunks for v in np.unique(array[c])} - {0})
-    known = np.asarray(values, dtype=np.int64)
-    numbers = np.zeros(array.shape, dtype=segment_number_dtype(len(values)))
-    for c in chunks:
-        numbers[c] = np.where(array[c] != 0, np.searchsorted(known, array[c]) + 1, 0)
-    return write_indexed_segmentation(numbers, values, reference_image, output_path)
+
+def _check_segments(segments: Sequence[Segment]) -> None:
+    for segment in segments:
+        if segment.number < 1:
+            raise ValueError(f"{segment}: segment numbers start at 1.")
+        if segment.instance is not None and segment.instance < 1:
+            raise ValueError(f"{segment}: instances are numbered from 1.")
+    keys = [s.key for s in segments]
+    if len(set(keys)) != len(keys):
+        raise ValueError("Each label, instance and rater may have only one segment in a file.")
+    places = [(s.layer, s.number) for s in segments]
+    if len(set(places)) != len(places):
+        raise ValueError("Each segment number may be used once per layer.")
+    for label, rater in {(s.label, s.rater) for s in segments}:
+        same = [s for s in segments if (s.label, s.rater) == (label, rater)]
+        if len(same) > 1 and any(s.instance is None for s in same):
+            raise ValueError(f"{label.name}: several segments of a label need an instance number each.")
 
 
-def write_indexed_segmentation(
-    numbers: np.ndarray,
-    bonehub_values: list[int],
-    reference_image: sitk.Image,
-    output_path: Path,
-) -> list[str]:
+def write_indexed_segmentation(numbers, segments: Sequence, reference_image: sitk.Image, output_path: Path) -> list[str]:
     """Write a mask whose voxels already hold segment numbers.
 
-    numbers: voxel array of segment numbers: 0 for background, k for bonehub_values[k - 1].
-    bonehub_values: the LabelMap value of each segment number, without repeats.
-    The other arguments are as for write_segmentation. Numbers absent from the mask are
-    left out of the header.
+    numbers: voxel array of segment numbers (0 for background), or a list of such arrays, one per layer.
+    segments: the Segment of each number in each layer; or, for one layer, the label of each segment number (number k
+        is segments[k - 1]).
+    The other arguments are as for write_segmentation. Segments without voxels are left out of the header.
     """
     np, sitk = _io_modules()
-
     output_path = Path(output_path)
     if not output_path.name.endswith(SEGMENTATION_SUFFIX):
         raise ValueError(f"A BoneHub segmentation file must end in '{SEGMENTATION_SUFFIX}': {output_path}")
-    if len(set(bonehub_values)) != len(bonehub_values):
-        raise ValueError("Each LabelMap value may have only one segment number.")
+    layers = [np.asarray(a) for a in numbers] if isinstance(numbers, (list, tuple)) else [np.asarray(numbers)]
+    segments = [s if isinstance(s, Segment) else Segment(s, 0, k) for k, s in enumerate(segments, start=1)]
+    _check_segments(segments)
+    if any(s.layer >= len(layers) for s in segments):
+        raise ValueError(f"A segment lies in a layer the mask does not have ({len(layers)} layers).")
 
-    image = sitk.GetImageFromArray(np.asarray(numbers, dtype=segment_number_dtype(len(bonehub_values))))
-    image.CopyInformation(reference_image)
-
-    # Slicer loads a segmentation much faster when the header gives each segment's extent.
-    boxes = sitk.LabelShapeStatisticsImageFilter()
-    boxes.Execute(image)
+    images, extents = [], {}
+    for layer, array in enumerate(layers):
+        top = max((s.number for s in segments if s.layer == layer), default=1)
+        image = sitk.GetImageFromArray(np.asarray(array, dtype=segment_number_dtype(top)))
+        image.CopyInformation(reference_image)
+        boxes = sitk.LabelShapeStatisticsImageFilter()  # Slicer loads a segmentation faster with each extent known
+        boxes.Execute(image)
+        for number in boxes.GetLabels():
+            x, y, z, sx, sy, sz = boxes.GetBoundingBox(number)
+            extents[(layer, int(number))] = f"{x} {x + sx - 1} {y} {y + sy - 1} {z} {z + sz - 1}"
+        images.append(image)
+    if len(images) == 1:
+        out = images[0]
+    else:
+        pixel = sitk.sitkUInt16 if any(i.GetPixelID() == sitk.sitkUInt16 for i in images) else sitk.sitkUInt8
+        out = sitk.Compose([sitk.Cast(i, pixel) for i in images])
+        out.CopyInformation(reference_image)
 
     present = []
-    for i, number in enumerate(sorted(int(n) for n in boxes.GetLabels())):
-        value = int(bonehub_values[number - 1])
-        label = LabelMap(value)
-        x, y, z, sx, sy, sz = boxes.GetBoundingBox(number)
-        r, g, b = _segment_color(value)
-        image.SetMetaData(f"Segment{i}_ID", label.name)
-        image.SetMetaData(f"Segment{i}_Name", label.name)
-        image.SetMetaData(f"Segment{i}_NameAutoGenerated", "0")
-        image.SetMetaData(f"Segment{i}_Color", f"{r:.6f} {g:.6f} {b:.6f}")
-        image.SetMetaData(f"Segment{i}_ColorAutoGenerated", "0")
-        image.SetMetaData(f"Segment{i}_Extent", f"{x} {x + sx - 1} {y} {y + sy - 1} {z} {z + sz - 1}")
-        image.SetMetaData(f"Segment{i}_LabelValue", str(number))
-        image.SetMetaData(f"Segment{i}_Layer", "0")
-        image.SetMetaData(f"Segment{i}_Tags", f"BoneHubLabel:{label.name}|BoneHubValue:{value}|")
-        present.append(label.name)
-    image.SetMetaData("Segmentation_MasterRepresentation", "Binary labelmap")
-    image.SetMetaData("Segmentation_ContainedRepresentationNames", "Binary labelmap|")
+    order = sorted((s for s in segments if (s.layer, s.number) in extents),
+                   key=lambda s: (_LABEL_ORDER[s.label], s.rater or "", s.instance or 0))
+    for i, segment in enumerate(order):
+        r, g, b = _segment_color(segment.label)
+        tags = f"BoneHubLabel:{segment.label.name}|"
+        if segment.instance is not None:
+            tags += f"BoneHubInstance:{segment.instance}|"
+        if segment.rater is not None:
+            tags += f"BoneHubRater:{segment.rater}|"
+        out.SetMetaData(f"Segment{i}_ID", segment.id)
+        out.SetMetaData(f"Segment{i}_Name", segment.label.name)
+        out.SetMetaData(f"Segment{i}_NameAutoGenerated", "0")
+        out.SetMetaData(f"Segment{i}_Color", f"{r:.6f} {g:.6f} {b:.6f}")
+        out.SetMetaData(f"Segment{i}_ColorAutoGenerated", "0")
+        out.SetMetaData(f"Segment{i}_Extent", extents[(segment.layer, segment.number)])
+        out.SetMetaData(f"Segment{i}_LabelValue", str(segment.number))
+        out.SetMetaData(f"Segment{i}_Layer", str(segment.layer))
+        out.SetMetaData(f"Segment{i}_Tags", tags)
+        if segment.label.name not in present:
+            present.append(segment.label.name)
+    out.SetMetaData("Segmentation_MasterRepresentation", "Binary labelmap")
+    out.SetMetaData("Segmentation_ContainedRepresentationNames", "Binary labelmap|")
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     writer = sitk.ImageFileWriter()
     writer.SetFileName(str(output_path))
     writer.UseCompressionOn()
     writer.SetCompressionLevel(9)
-    writer.Execute(image)
+    writer.Execute(out)
+    if len(images) > 1:
+        _mark_layer_axis(output_path)
     return present
 
 
-def _tags(reader_or_image, i: int) -> dict[str, str]:
+def _mark_layer_axis(path: Path) -> None:
+    """ITK writes the layer axis of a 4D mask as kind 'vector'; 3D Slicer writes and expects 'list'."""
+    data = Path(path).read_bytes()
+    end = data.index(b"\n\n") + 2
+    header = data[:end].replace(b"kinds: vector domain domain domain", b"kinds: list domain domain domain")
+    Path(path).write_bytes(header + data[end:])
+
+
+def _tags(image, i: int) -> dict[str, str]:
     key = f"Segment{i}_Tags"
-    if not reader_or_image.HasMetaDataKey(key):
+    if not image.HasMetaDataKey(key):
         return {}
-    return dict(tag.split(":", 1) for tag in reader_or_image.GetMetaData(key).split("|") if ":" in tag)
+    return dict(tag.split(":", 1) for tag in image.GetMetaData(key).split("|") if ":" in tag)
 
 
-def read_segment_numbers(path: Path) -> tuple[sitk.Image, dict[int, int]]:
-    """Read a mask as stored: an image of segment numbers, and the LabelMap value of each number."""
-    np, sitk = _io_modules()
+def read_segmentation(path: Path) -> tuple[list[sitk.Image], list[Segment]]:
+    """Read a mask as stored: the image of segment numbers of each layer (one for a file whose segments do not
+    overlap), and every segment of the file, which says the label, layer and number of each."""
+    _, sitk = _io_modules()
     image = sitk.ReadImage(str(path))
-
-    value_of = {}
+    segments = []
     i = 0
     while image.HasMetaDataKey(f"Segment{i}_LabelValue"):
-        number = int(image.GetMetaData(f"Segment{i}_LabelValue"))
         tags, name = _tags(image, i), image.GetMetaData(f"Segment{i}_Name")
-        if "BoneHubValue" in tags:
-            value_of[number] = int(tags["BoneHubValue"])
-        elif name in LabelMap.__members__:  # segment added in Slicer, without BoneHub tags
-            value_of[number] = LabelMap[name].value
-        else:
-            raise ValueError(f"Segment '{name}' in '{path}' has no BoneHub label.")
+        name = tags.get("BoneHubLabel", name)
+        if name not in LabelMap.__members__:
+            raise ValueError(f"Segment '{name}' in '{path}' is not a label of the label map.")
+        layer = int(image.GetMetaData(f"Segment{i}_Layer")) if image.HasMetaDataKey(f"Segment{i}_Layer") else 0
+        segments.append(Segment(LabelMap[name], layer, int(image.GetMetaData(f"Segment{i}_LabelValue")),
+                                int(tags["BoneHubInstance"]) if "BoneHubInstance" in tags else None,
+                                tags.get("BoneHubRater")))
         i += 1
-    return image, value_of
+    if image.GetNumberOfComponentsPerPixel() > 1:
+        layers = [sitk.VectorIndexSelectionCast(image, k) for k in range(image.GetNumberOfComponentsPerPixel())]
+    else:
+        layers = [image]
+    return layers, segments
 
 
-def read_segmentation(path: Path) -> sitk.Image:
-    """Read a mask as an int32 image of LabelMap values (0 for background)."""
+def read_label_mask(path: Path, label: LabelMap | str, instance: int | None = None, rater: str | None = None) -> sitk.Image:
+    """A label's region in a mask, as a 0/1 uint8 image: the union of its segments (only the given instance or rater,
+    where given)."""
     np, sitk = _io_modules()
-    image, value_of = read_segment_numbers(path)
-
-    lookup = np.zeros(max(value_of, default=0) + 1, dtype=np.int32)
-    for number, value in value_of.items():
-        lookup[number] = value
-    result = sitk.GetImageFromArray(lookup[sitk.GetArrayViewFromImage(image)])
-    result.CopyInformation(image)
-    return result
+    label = _label(label)
+    layers, segments = read_segmentation(path)
+    region = None
+    for s in segments:
+        if s.label != label or (instance is not None and s.instance != instance) or (rater is not None and s.rater != rater):
+            continue
+        voxels = sitk.GetArrayViewFromImage(layers[s.layer]) == s.number
+        region = voxels if region is None else region | voxels
+    if region is None:
+        region = np.zeros(sitk.GetArrayViewFromImage(layers[0]).shape, dtype=bool)
+    out = sitk.GetImageFromArray(region.astype(np.uint8))
+    out.CopyInformation(layers[0])
+    return out
 
 
 def read_segmentation_header(path: Path) -> tuple[dict[str, str], dict[str, str]]:
@@ -204,19 +309,27 @@ def read_segmentation_header(path: Path) -> tuple[dict[str, str], dict[str, str]
 
 
 def read_segmentation_segments(path: Path) -> tuple[tuple[int, ...], dict[str, tuple[int, ...] | None]]:
-    """The size of a mask's voxel grid and, per label, the segment's extent in voxels (x_min x_max y_min y_max z_min
-    z_max, as 3D Slicer writes it), read from the header only. The extent is None where the header has none."""
+    """The size of a mask's voxel grid (x, y, z) and, per label, the extent of its segments in voxels (x_min x_max
+    y_min y_max z_min z_max, as 3D Slicer writes it; their union where a label has several), read from the header
+    only. The extent is None where the header has none."""
     fields, pairs = read_segmentation_header(path)
     sizes = tuple(int(size) for size in fields.get("sizes", "").split())
-    segments = {}
+    if len(sizes) == 4:  # the first axis lists the layers
+        sizes = sizes[1:]
+    segments: dict[str, tuple[int, ...] | None] = {}
     i = 0
     while f"Segment{i}_Name" in pairs:
-        extent = pairs.get(f"Segment{i}_Extent")
-        segments[pairs[f"Segment{i}_Name"]] = tuple(int(v) for v in extent.split()) if extent else None
+        name, extent = pairs[f"Segment{i}_Name"], pairs.get(f"Segment{i}_Extent")
+        box = tuple(int(v) for v in extent.split()) if extent else None
+        if name in segments:
+            old = segments[name]
+            box = None if old is None or box is None else tuple(
+                min(old[k], box[k]) if k % 2 == 0 else max(old[k], box[k]) for k in range(6))
+        segments[name] = box
         i += 1
     return sizes, segments
 
 
 def read_segmentation_labels(path: Path) -> list[str]:
-    """Read the names of the labels in a mask from its header only."""
+    """The names of the labels in a mask, from its header only (each once)."""
     return list(read_segmentation_segments(path)[1])
